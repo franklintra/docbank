@@ -439,6 +439,7 @@ For directories that receive files over time, configure a daemon-owned
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["agent-sessions"]
 settle_time = "30s"
 minimum_age = "168h"
 scan_interval = "5s"
