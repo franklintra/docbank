@@ -166,7 +166,7 @@ pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
-tags = ["receipts"] # optional; tags must already exist
+tags = ["receipts"] # optional; first run: docbank tag create receipts
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
@@ -335,7 +335,7 @@ exclude = [".stversions", ".git"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
-Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
+First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
 
 Empty, absolute, parent-traversal, malformed, and backslash-containing glob
 rules fail watcher or folder-scanner construction with the watch name.
