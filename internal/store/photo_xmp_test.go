@@ -638,10 +638,10 @@ func TestPhotoXMPURLSidecarPairingAndClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, run)
 	require.NotNil(t, work.Sidecar)
-	assert.NoError(t, s.CheckPhotoXMPPairing(ctx, work, "jpg"))
-	assert.NoError(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "jpg"))
-	assert.ErrorIs(t, s.CheckPhotoXMPPairing(ctx, work, "png"), ErrInvalidPhotoAsset)
-	assert.ErrorIs(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "png"), ErrInvalidPhotoAsset)
+	require.NoError(t, s.CheckPhotoXMPPairing(ctx, work, "jpg"))
+	require.NoError(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "jpg"))
+	require.ErrorIs(t, s.CheckPhotoXMPPairing(ctx, work, "png"), ErrInvalidPhotoAsset)
+	require.ErrorIs(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "png"), ErrInvalidPhotoAsset)
 }
 
 // Pruning keeps each live source path's latest sidecar version, and a purge drops them.
