@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"testing"
 
@@ -59,8 +60,8 @@ func TestWriteProvenanceShowsURLFetchEvidence(t *testing.T) {
 	assert.Contains(t, human.String(), "Final URL:")
 	assert.Contains(t, human.String(), "Fetch time:")
 	assert.NotContains(t, human.String(), "Source:")
-	assert.Contains(t, human.String(), strconv.Quote(string(fetch.LastModified)))
-	assert.Contains(t, human.String(), strconv.Quote(string(fetch.ETag)))
+	assert.Regexp(t, `(?m)^Last-Modified: +`+regexp.QuoteMeta(strconv.Quote(string(fetch.LastModified)))+`$`, human.String())
+	assert.Regexp(t, `(?m)^ETag: +`+regexp.QuoteMeta(strconv.Quote(string(fetch.ETag)))+`$`, human.String())
 }
 
 func TestProvenanceCLIValidatesPaginationBeforeDaemonStartup(t *testing.T) {

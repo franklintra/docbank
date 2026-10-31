@@ -191,7 +191,7 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 			wantCode: "size_mismatch", wantStatus: http.StatusUnprocessableEntity},
 		{name: "long size", mutate: func(in *uploadRequest) { in.expectedSize++ },
 			wantCode: "size_mismatch", wantStatus: http.StatusUnprocessableEntity},
-		{name: "extra part", mutate: func(in *uploadRequest) { in.extraPart = true; in.parentPath = "/missing/nested" },
+		{name: "extra part", mutate: func(in *uploadRequest) { in.extraPart = true },
 			wantCode: "validation", wantStatus: http.StatusUnprocessableEntity},
 		{name: "different filename", mutate: func(in *uploadRequest) { in.filename = "other.txt" },
 			wantCode: "validation", wantStatus: http.StatusUnprocessableEntity},
@@ -436,6 +436,7 @@ func TestUploadURLMapsFetchEvidence(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, fetch, page.Items[0].SourceDescription)
 	expected := &ingest.URLFetch{Version: 1, RequestedURL: "https://example.com/download?q=1", FinalURL: "https://example.com/filing.txt", FetchedAt: "2026-10-01T12:34:56.123Z", ETag: []byte{'W', 0xff}, LastModified: []byte("server supplied text")}
+	assert.Equal(t, expected.RequestedURL, page.Items[0].OriginalPath)
 	assert.Equal(t, expected, page.Items[0].URLFetch)
 	resp, body = get(t, ts, "/api/v1/collections", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

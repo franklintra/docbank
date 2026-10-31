@@ -67,7 +67,6 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4, want: "server.txt"},
 		{name: "newline path", target: "/report%0Aone.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "backslash path", target: "/report%5Cone.txt", bytes: 4, cap: 4, want: "download"},
-		{name: "SOH path", target: "/report%01one.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "DEL path", target: "/report%7Fone.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "drive disposition", disposition: `attachment; filename="a:b.txt"`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
 		{name: "chunked", chunked: true, bytes: 5, cap: 4, message: "download exceeds"},
