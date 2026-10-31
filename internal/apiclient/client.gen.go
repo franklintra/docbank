@@ -30683,6 +30683,8 @@ type VersionPruneRequest = api.VersionPruneRequest
 
 type VolumeLimits = bundle.VolumeLimits
 
+type WatchProcessingStatus = api.WatchProcessingStatus
+
 type WatchedInbox = api.WatchedInbox
 
 type WatchedInboxList = api.WatchedInboxList

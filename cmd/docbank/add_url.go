@@ -93,7 +93,7 @@ func fetchURL(ctx context.Context, client http.Client, raw string, allowHTTP boo
 	_, params, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
 	var name string
 	for _, candidate := range []string{params["filename"], path.Base(resp.Request.URL.Path), path.Base(u.Path), "download"} {
-		if normalized, err := store.NormalizeName(candidate); err == nil && !strings.ContainsAny(normalized, "\r\n\\") && strings.IndexByte(normalized, ':') != 1 {
+		if normalized, err := store.NormalizeName(candidate); err == nil && !strings.ContainsFunc(normalized, func(r rune) bool { return r < ' ' || r == 0x7f || r == '\\' }) && strings.IndexByte(normalized, ':') != 1 {
 			name = normalized
 			break
 		}
