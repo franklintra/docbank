@@ -802,7 +802,7 @@ func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidec
 	}
 	rows, err := q.QueryContext(ctx, `SELECT f.file_id,f.role,n.name,COALESCE(p.original_path,'') FROM photo_files f
  JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=n.id
- AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND i.source_kind NOT LIKE 'embedded:%')
+ AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND i.source_kind NOT LIKE 'embedded:%' AND i.source_kind<>'url')
  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  WHERE f.asset_id=? AND f.role IN ('raw','image') AND n.trashed_at IS NULL ORDER BY f.file_id`, assetID)
 	if err != nil {

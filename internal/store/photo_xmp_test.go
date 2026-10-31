@@ -611,6 +611,39 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 	})
 }
 
+func TestPhotoXMPURLSidecarPairingAndClaim(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	var nodes []Node
+	for i, file := range []struct{ name, mime, hash string }{
+		{"capture.jpg", "image/jpeg", fakeHash("a1")},
+		{"capture.xmp", "application/rdf+xml", fakeHash("b2")},
+	} {
+		source := fmt.Sprintf("https://example.com/download?id=%d", i+1)
+		fetch := fmt.Sprintf(`{"version":1,"requested_url":%q,"final_url":%q,"fetched_at":"2026-10-01T12:34:56Z"}`, source, source)
+		run, err := s.BeginIngest(ctx, "url", fetch)
+		require.NoError(t, err)
+		node, _, err := s.IngestFile(ctx, run, s.RootID(), file.name, file.hash, 4, file.mime, source, "")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	asset, err := s.PhotoAssetForNode(ctx, nodes[0].ID)
+	require.NoError(t, err)
+	image := fileByRole(asset.Files, PhotoRoleImage)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, nodes[1].ID, PhotoRoleSidecar, &image.ID)
+	require.NoError(t, err)
+	publishXMPOrientation(t, s, image.NodeID, fakeHash("ee"))
+	work, run, err := s.ClassifyPhotoXMP(ctx, image.ID)
+	require.NoError(t, err)
+	require.True(t, run)
+	require.NotNil(t, work.Sidecar)
+	assert.NoError(t, s.CheckPhotoXMPPairing(ctx, work, "jpg"))
+	assert.NoError(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "jpg"))
+	assert.ErrorIs(t, s.CheckPhotoXMPPairing(ctx, work, "png"), ErrInvalidPhotoAsset)
+	assert.ErrorIs(t, s.CheckPhotoXMPClaim(ctx, work, "https://example.com/download?id=2", "png"), ErrInvalidPhotoAsset)
+}
+
 // Pruning keeps each live source path's latest sidecar version, and a purge drops them.
 func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 	t.Parallel()
