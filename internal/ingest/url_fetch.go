@@ -29,7 +29,7 @@ func ParseURLFetch(kind, description string) *URLFetch {
 		}
 	}
 	at, err := time.Parse(time.RFC3339Nano, f.FetchedAt)
-	if err != nil || at.Location() != time.UTC {
+	if err != nil || at.Format("-0700") != "+0000" {
 		return nil
 	}
 	return &f
