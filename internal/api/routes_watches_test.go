@@ -38,7 +38,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	<-running
 
 	source := filepath.Join(t.TempDir(), "source")
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, st := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{
 			{
@@ -84,6 +84,13 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "0s", got.Items[1].MinimumAge)
 	assert.Empty(t, got.Items[1].Exclude)
 	assert.Nil(t, got.Items[1].Job)
+	_, err := st.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	resp, body = get(t, ts, "/api/v1/watches", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 2)
+	assert.Empty(t, got.Items[0].TagError)
 	close(release)
 }
 

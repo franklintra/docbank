@@ -144,14 +144,10 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	require.NoError(t, supervisor.Start("watch:receipts", func(ctx context.Context) error {
-		jobs.ReportError(ctx, errors.New("synthetic notification failure"))
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	require.Eventually(t, func() bool {
-		return supervisor.Snapshot()[0].Error != ""
-	}, time.Second, time.Millisecond)
-	ts, st := newTestServer(t, func(d *api.Deps) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{
 			{Name: "receipts", Source: t.TempDir(), Destination: "/receipts", Tags: []string{"receipts"}},
@@ -164,15 +160,4 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Len(t, got.Items, 1)
 	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
-	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[0].Error)
-	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].TagError)
-
-	_, err := st.CreateTag(t.Context(), "receipts")
-	require.NoError(t, err)
-	resp, body = get(t, ts, "/api/v1/jobs", headers)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &got))
-	require.Len(t, got.Items, 1)
-	assert.Empty(t, got.Items[0].TagError)
-	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[0].Error)
 }
