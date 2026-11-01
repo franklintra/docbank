@@ -304,33 +304,64 @@ func TestLocalTextTokenizerLimitLeavesSweep(t *testing.T) {
 
 func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
 	t.Parallel()
-	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-	initial, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	for _, item := range initial {
-		require.NoError(t, setup.process(t.Context(), item))
+	for _, missing := range []bool{false, true} {
+		name := "published"
+		if missing {
+			name = "missing_payload"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+			initial, err := setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			for _, item := range initial {
+				require.NoError(t, setup.process(t.Context(), item))
+			}
+			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+			require.NoError(t, err)
+			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending-index.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+			require.NoError(t, err)
+			require.NoError(t, setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}))
+			space := setup.Service.profiles[setup.Selected].vectorSpaces["chunk"]
+			if missing {
+				source, err := fixture.catalog.CaptureVectorIndexSource(t.Context(), space)
+				require.NoError(t, err)
+				require.Len(t, source.Members, 1)
+				require.NoError(t, fixture.blobs.Remove(source.Members[0].PayloadBlobHash))
+				_, err = fixture.catalog.ReadVectorIndexVectorSet(t.Context(), fixture.blobs, source.Members[0])
+				require.ErrorIs(t, err, store.ErrVectorSetUnavailable)
+			}
+			var active atomic.Int64
+			setup.ActivityBegin = func() { active.Add(1) }
+			setup.ActivityEnd = func() { active.Add(-1) }
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- setup.Backfill(ctx, nil) }()
+			defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
+			require.Eventually(t, func() bool { return active.Load() == 1 }, time.Second, 10*time.Millisecond, "completed embeddings still need a published vector generation")
+			indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+				return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
+			}, Mutate: func(_ context.Context, fn func() error) error { return fn() }, Owner: "local-text-publication-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
+			require.NoError(t, err)
+			if missing {
+				indexed := make(chan error, 1)
+				go func() { indexed <- indexer.Run(ctx) }()
+				defer func() { cancel(); require.ErrorIs(t, <-indexed, ctx.Err()) }()
+			} else {
+				generation, err := indexer.Rebuild(ctx, space)
+				require.NoError(t, err)
+				require.Positive(t, generation.RowCount)
+			}
+			require.Eventually(t, func() bool { return active.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
+			pending, err := setup.Pending(ctx)
+			require.NoError(t, err)
+			require.False(t, pending, "external re-embedding does not count as active publication")
+			if missing {
+				_, err = fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
+				require.ErrorIs(t, err, store.ErrNotFound)
+			}
+		})
 	}
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending-index.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	require.NoError(t, setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}))
-	var active atomic.Int64
-	setup.ActivityBegin = func() { active.Add(1) }
-	setup.ActivityEnd = func() { active.Add(-1) }
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- setup.Backfill(ctx, nil) }()
-	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-	require.Eventually(t, func() bool { return active.Load() == 1 }, time.Second, 10*time.Millisecond, "completed embeddings still need a published vector generation")
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-		return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
-	}, Mutate: func(_ context.Context, fn func() error) error { return fn() }, Owner: "local-text-publication-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
-	require.NoError(t, err)
-	generation, err := indexer.Rebuild(ctx, setup.Service.profiles[setup.Selected].vectorSpaces["chunk"])
-	require.NoError(t, err)
-	require.Positive(t, generation.RowCount)
-	require.Eventually(t, func() bool { return active.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestLocalTextPurgeSuppressionControlsTargets(t *testing.T) {

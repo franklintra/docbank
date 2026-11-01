@@ -280,22 +280,9 @@ func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, erro
 		return false, nil
 	}
 	for _, space := range profile.vectorSpaces {
-		source, err := setup.Service.catalog.CaptureVectorIndexSource(ctx, space)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		head, err := setup.Service.catalog.ActiveVectorIndexHead(ctx, space)
-		if errors.Is(err, store.ErrNotFound) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if head.SourceManifestChecksum != source.ManifestChecksum {
-			return true, nil
+		pending, err := setup.Service.catalog.VectorIndexPublicationPending(ctx, space)
+		if err != nil || pending {
+			return pending, err
 		}
 	}
 	return false, nil
