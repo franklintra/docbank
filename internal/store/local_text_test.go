@@ -41,5 +41,16 @@ func checkMissingProcessingTargets(t *testing.T, s *Store) {
 	require.Less(t, first[1].ContentVersionID, last[0].ContentVersionID)
 	for _, item := range append(first, last...) {
 		require.NotEqual(t, hidden.CurrentVersionID, item.ContentVersionID)
+		node, err := s.NodeByID(t.Context(), item.NodeID)
+		require.NoError(t, err)
+		require.Equal(t, node.Name, item.Name)
 	}
+	node, err := s.NodeByID(t.Context(), last[0].NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Move(t.Context(), node.ID, *node.ParentID, "renamed.pdf", node.Revision)
+	require.NoError(t, err)
+	last, err = s.MissingProcessingTargetsAfter(t.Context(), fakeHash("f1"), first[1].ContentVersionID, 1, 2)
+	require.NoError(t, err)
+	require.Equal(t, "renamed.pdf", last[0].Name)
+	require.Equal(t, node.CurrentVersionID, last[0].ContentVersionID)
 }

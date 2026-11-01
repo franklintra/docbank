@@ -14,7 +14,7 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
 	query := `WITH RECURSIVE live(id) AS (
  SELECT id FROM nodes WHERE parent_id IS NULL AND trashed_at IS NULL
  UNION ALL SELECT n.id FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.trashed_at IS NULL
- ) SELECT n.id,v.version_id FROM nodes n JOIN live l ON l.id=n.id
+ ) SELECT n.id,v.version_id,n.name FROM nodes n JOIN live l ON l.id=n.id
  JOIN content_versions v ON v.version_id=n.current_version_id
 `
 	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>?
@@ -36,7 +36,7 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
 	var out []DocumentSummary
 	for rows.Next() {
 		var item DocumentSummary
-		if err := rows.Scan(&item.NodeID, &item.ContentVersionID); err != nil {
+		if err := rows.Scan(&item.NodeID, &item.ContentVersionID, &item.Name); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

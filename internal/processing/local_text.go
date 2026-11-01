@@ -10,8 +10,19 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/store"
 )
+
+const localTextSkipLimit = 262_144
+
+type localTextSkipKey struct{ version, name string }
+type localTextSkip struct {
+	seen             bool
+	passwordRequired bool
+	passwordHash     [sha256.Size]byte
+}
 
 var ErrLocalTextConfiguration = errors.New("unsupported local text configuration")
 
@@ -39,6 +50,10 @@ type LocalTextSetup struct {
 	Startup        func(context.Context, bool, string) error
 	Save           func(string, string) error
 	mu             sync.Mutex
+	// The backfill lane owns these across its sequential list/process pages.
+	skips      map[localTextSkipKey]*localTextSkip
+	skipWarned bool
+	logger     *slog.Logger
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (LocalTextPlan, *Service, error) {
@@ -128,16 +143,77 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 			return nil, nil
 		}
 	}
-	return setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), limit)
+	var result []store.DocumentSummary
+	var passwordHash [sha256.Size]byte
+	var passwordsChecked, passwordsValid bool
+	for len(result) < limit {
+		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), limit-len(result))
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			if len(result) == 0 {
+				for key, skip := range setup.skips {
+					if !skip.seen {
+						delete(setup.skips, key)
+					} else {
+						skip.seen = false
+					}
+				}
+			}
+			break
+		}
+		for _, item := range items {
+			key := localTextSkipKey{item.ContentVersionID, item.Name}
+			if skip, ok := setup.skips[key]; ok {
+				if skip.passwordRequired && !passwordsChecked {
+					passwordHash, passwordsValid = localTextPasswordHash(profile)
+					passwordsChecked = true
+				}
+				if !skip.passwordRequired || (passwordsValid && skip.passwordHash == passwordHash) {
+					skip.seen = true
+					continue
+				}
+				delete(setup.skips, key)
+			}
+			result = append(result, item)
+		}
+		after = items[len(items)-1].ContentVersionID
+	}
+	return result, nil
 }
 
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
 	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
+	profile := setup.Service.profiles[setup.Selected]
 	plan, err := setup.Service.Plan(ctx, selector)
 	if err != nil {
 		return err
 	}
 	if plan.RenditionIneligibleReason != "" {
+		if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
+			passwordRequired := plan.RenditionIneligibleReason == string(media.CapabilityReasonPDFPasswordRequired)
+			var passwordHash [sha256.Size]byte
+			var passwordsValid bool
+			if passwordRequired {
+				passwordHash, passwordsValid = localTextPasswordHash(profile)
+			}
+			if !passwordRequired || passwordsValid {
+				if setup.skips == nil {
+					setup.skips = make(map[localTextSkipKey]*localTextSkip)
+				}
+				if len(setup.skips) < localTextSkipLimit {
+					setup.skips[localTextSkipKey{item.ContentVersionID, item.Name}] = &localTextSkip{seen: true, passwordRequired: passwordRequired, passwordHash: passwordHash}
+				} else if !setup.skipWarned {
+					logger := setup.logger
+					if logger == nil {
+						logger = slog.Default()
+					}
+					logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
+					setup.skipWarned = true
+				}
+			}
+		}
 		return nil
 	}
 	_, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
@@ -147,7 +223,23 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 	return err
 }
 
+func localTextPasswordHash(profile configuredProfile) ([sha256.Size]byte, bool) {
+	provider, ok := profile.provider.(interface {
+		PDFPasswords() ([]string, bool, error)
+	})
+	if !ok {
+		return [sha256.Size]byte{}, false
+	}
+	passwords, supported, err := provider.PDFPasswords()
+	if err != nil || !supported {
+		return [sha256.Size]byte{}, false
+	}
+	encoded, err := json.Marshal(passwords)
+	return sha256.Sum256(encoded), err == nil
+}
+
 func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) error {
+	setup.logger = logger
 	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
 		List: setup.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: setup.process}
 	return lane.Run(ctx)

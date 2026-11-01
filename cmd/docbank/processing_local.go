@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -27,11 +28,12 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			closeClient := sync.OnceValue(c.Close)
+			defer func() { _ = closeClient() }()
 			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Profile: profile, Server: server}})
 			if err != nil {
 				return err
 			}
-			defer func() { _ = c.Close() }()
 			if err := writeLocalTextPlan(cmd, *plan); err != nil {
 				return err
 			}
@@ -44,7 +46,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.Close(); err != nil {
+			if err := closeClient(); err != nil {
 				return err
 			}
 			layout, err := home.Resolve()
