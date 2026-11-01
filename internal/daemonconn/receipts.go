@@ -2657,6 +2657,24 @@ func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, nam
 	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
 		return receipt, fmt.Errorf("decoding upload response: %w", err)
 	}
+	return validateUploadReceipt(receipt, expectedHash, expectedSize)
+}
+
+// validateUploadReceipt returns receipt only when it binds an added or skipped
+// file node to the declared bytes; anything else is an unknown outcome.
+func validateUploadReceipt(receipt api.UploadReceipt, expectedHash string, expectedSize int64) (api.UploadReceipt, error) {
+	node := receipt.Node
+	switch {
+	case receipt.Status != "added" && receipt.Status != "skipped":
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("upload receipt has unknown status %q", receipt.Status)}
+	case node.ID <= 0 || node.Kind != "file" || node.Revision <= 0:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt does not name an addressable file node")}
+	case receipt.ComputedHash != expectedHash || receipt.ComputedSize != expectedSize ||
+		node.BlobHash != expectedHash || node.Size != expectedSize:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt disagrees with declared bytes")}
+	case receipt.Status == "added" && receipt.IngestID == "":
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("added upload receipt is missing its ingest ID")}
+	}
 	return receipt, nil
 }
 
