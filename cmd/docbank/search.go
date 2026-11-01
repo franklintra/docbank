@@ -67,7 +67,6 @@ appends matching folders. Filters, --fuzzy, --limit above
 --json prints lexical {hits, limit, truncated} or hybrid processing results
 plus folders.
 --agent prints an OK header and one line per hit.
---fuzzy appends filename/path matches with one typo.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
 	GroupID: groupSearch,
@@ -595,7 +594,7 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "PDF fact expression, e.g. pdf_embedded_file_count_min:1 OR pdf_has_javascript:true")
+	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "match a PDF fact expression")
 	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
