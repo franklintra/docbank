@@ -2220,7 +2220,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
 	if opts.PDFFilter != "" {
-		predicate, err := compilePDFFilter(opts.PDFFilter)
+		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
 		if err != nil {
 			return SearchOptions{}, err
 		}

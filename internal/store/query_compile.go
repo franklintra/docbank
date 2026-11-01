@@ -241,7 +241,7 @@ func (c queryCompiler) compileAssociativeChildren(
 
 func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
-	if c.pdfOnly && query.PDFFieldKind(field) == "" {
+	if c.pdfOnly && field == "" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
 	}
 	if syntax.Value == "" && field != "flag" && field != "label" {

@@ -31,8 +31,8 @@ func compilePDFPredicate(field, value string, start, end int) (compiledQueryFrag
 	}, nil
 }
 
-func compilePDFFilter(text string) (compiledQueryFragment, error) {
-	compiled, err := (queryCompiler{pdfOnly: true}).compile(context.Background(), query.Query{
+func compilePDFFilter(ctx context.Context, text string) (compiledQueryFragment, error) {
+	compiled, err := (queryCompiler{pdfOnly: true}).compile(ctx, query.Query{
 		V: 1, Text: text, Syntax: "advanced", Mode: "lexical",
 		Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"},
 	}, nil)

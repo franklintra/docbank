@@ -103,7 +103,7 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 		{"pdf_encrypted:(mime:application/pdf)", "nested field overrides are not supported"},
 		{"pdf_encrypted:true NEAR/5 pdf_has_javascript:false", "NEAR is supported only for text and name operands"},
 	} {
-		_, err := compilePDFFilter(tc.text)
+		_, err := compilePDFFilter(t.Context(), tc.text)
 		expressionErr, ok := errors.AsType[*query.ExpressionError](err)
 		require.True(t, ok, "%s: %v", tc.text, err)
 		assert.Equal(t, tc.want, expressionErr.Message, tc.text)
