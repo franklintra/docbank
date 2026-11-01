@@ -161,38 +161,48 @@ func TestPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T) {
 	view, err := s.DocumentEventsForVersion(t.Context(), version.ID)
 	require.NoError(t, err)
 	assert.Equal(t, record, view.Events)
-	changes, cursor, err := s.VaultChanges(t.Context(), cursor, 500)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	require.Equal(t, "processed", changes[0].Kind)
 	require.Equal(t, version.NodeID, changes[0].NodeID)
+}
+
+func TestPublishDocumentEventsFeedDetectsOutputChanges(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		epoch int64
+		name        string
+		fingerprint string
+		digestSeed  string
+		wantChange  bool
 	}{
-		{name: "epoch-only replay", epoch: 2},
-		{name: "checksum change", epoch: 3},
+		{name: "epoch-only replay", fingerprint: fakeHash("f1"), digestSeed: "d4", wantChange: false},
+		{name: "checksum change", fingerprint: fakeHash("f2"), digestSeed: "d5", wantChange: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			target.InputEpoch = tc.epoch
-			fingerprint := fakeHash("f1")
-			if tc.epoch == 3 {
-				fingerprint = fakeHash("f2")
-				record = documentEventRecord(t, s.VaultID(), version.ID, "d5")
-				canonical = mustMarshalDocumentEvents(t, record)
-			}
-			_, err = s.db.Exec(`UPDATE document_event_state SET input_epoch=?,deriver_fingerprint=?`, tc.epoch, fingerprint)
+			s := newTestStore(t)
+			version, target := ingestDocumentEventTarget(t, s, "report.txt", "d4")
+			record := documentEventRecord(t, s.VaultID(), version.ID, "d4")
+			_, err := s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 			require.NoError(t, err)
-			_, err = s.PublishDocumentEvents(t.Context(), target, fingerprint,
-				requireDocumentEventInputsSHA256(t, s, target), canonical)
+			_, cursor, err := s.VaultChanges(t.Context(), "", 500)
 			require.NoError(t, err)
-			changes, cursor, err = s.VaultChanges(t.Context(), cursor, 500)
+
+			target.InputEpoch = 2
+			record = documentEventRecord(t, s.VaultID(), version.ID, tc.digestSeed)
+			_, err = s.db.Exec(`UPDATE document_event_state SET input_epoch=?,deriver_fingerprint=?`, target.InputEpoch, tc.fingerprint)
 			require.NoError(t, err)
-			if tc.epoch < 3 {
-				require.Empty(t, changes, "epoch-only publications stay silent")
-			} else {
+			_, err = s.PublishDocumentEvents(t.Context(), target, tc.fingerprint,
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+			require.NoError(t, err)
+			if tc.wantChange {
 				require.Len(t, changes, 1)
 				require.Equal(t, "processed", changes[0].Kind)
+			} else {
+				require.Empty(t, changes, "epoch-only publications stay silent")
 			}
 		})
 	}

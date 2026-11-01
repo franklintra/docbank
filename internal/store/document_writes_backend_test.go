@@ -103,7 +103,11 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			} else {
 				require.Equal(t, 1, enrolled)
 			}
-			require.Len(t, changes, 6)
+			var kinds []string
+			for _, change := range changes {
+				kinds = append(kinds, change.Kind)
+			}
+			require.Equal(t, []string{"created", "created", "created", "created", "version_added", "version_added"}, kinds)
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				high, err := s.auditNodeSequence(ctx, tx)
 				if err != nil {

@@ -163,7 +163,7 @@ it.each([
   {
     name: "vault changes",
     read: () => api.vaultChanges(undefined, { session: "synthetic-session" }),
-    body: '{"type":"change","sequence":1}\n{"type":"result","has_more":false}\n',
+    body: '{"type":"change","change":{"cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE","kind":"created","node_id":2,"revision":1}}\n{"type":"result","cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE"}\n',
   },
 ])("preserves $name as an NDJSON response", async ({ read, body }) => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
