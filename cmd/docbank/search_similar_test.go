@@ -80,12 +80,15 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 func TestPDFFilterRejectsUnsupportedSearchModes(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	t.Cleanup(func() { resetFlags(rootCmd) })
-	for _, args := range [][]string{
-		{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"},
-		{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"},
-		{"search", "draft", "--mode", "hybrid", "--pdf-filter", "pdf_encrypted:true"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"}, "--similar-to cannot be combined with --pdf-filter"},
+		{[]string{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"}, "--mode search cannot be combined with --pdf-filter"},
+		{[]string{"search", "draft", "--mode", "hybrid", "--pdf-filter", "pdf_encrypted:true"}, "--mode search cannot be combined with --pdf-filter"},
 	} {
-		_, err := runCLI(t, args...)
-		require.Error(t, err)
+		_, err := runCLI(t, tc.args...)
+		require.ErrorContains(t, err, tc.want)
 	}
 }
