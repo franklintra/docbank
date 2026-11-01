@@ -1762,23 +1762,10 @@ func TestSearchFuzzyRoundTrip(t *testing.T) {
 }
 
 func TestSearchPDFFilterRequiresEcho(t *testing.T) {
-	for _, echo := range []bool{true, false} {
-		t.Run(strconv.FormatBool(echo), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "pdf_encrypted:true", r.URL.Query().Get("pdf_filter"))
-				report := api.SearchReport{Hits: []api.SearchHit{}}
-				if echo {
-					report.PDFFilter = "pdf_encrypted:true"
-				}
-				assert.NoError(t, json.MarshalWrite(w, report))
-			}))
-			defer server.Close()
-			_, err := daemonconn.New(server.URL, "key").SearchWithOptions(t.Context(), "", 10, daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"})
-			if echo {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "filter authority")
-			}
-		})
-	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}}))
+	}))
+	defer server.Close()
+	_, err := daemonconn.New(server.URL, "key").SearchWithOptions(t.Context(), "", 10, daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"})
+	require.ErrorContains(t, err, "filter authority")
 }

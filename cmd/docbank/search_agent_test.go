@@ -171,22 +171,3 @@ func searchAgentDocumentReport(results ...api.DocumentSearchResult) api.Document
 	return api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Results: results,
 		Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: max(1, len(results)), CompleteDocuments: max(1, len(results))}}
 }
-
-func TestPDFCoverageNoticeWithNoHits(t *testing.T) {
-	for _, agent := range []bool{false, true} {
-		cmd, out := processingTestCommand()
-		report := api.SearchReport{SourceMetadataPending: new(int64(12))}
-		var err error
-		if agent {
-			err = writeLexicalSearchAgent(cmd, "", report, automaticSearchOutcome{})
-		} else {
-			err = writeSearchReport(cmd, report, "", "")
-		}
-		require.NoError(t, err)
-		if agent {
-			assert.Equal(t, "OK search count=0 query=\"\" mode=lexical degraded=false truncated=false source_metadata_pending=12\n", out.String())
-		} else {
-			assert.Contains(t, out.String(), "12 live files across this vault lack current metadata. PDF results may be incomplete.")
-		}
-	}
-}

@@ -582,29 +582,3 @@ it("decodes photo timeline counts without accepting snapshot authority", async (
     ),
   ).rejects.toThrow("values exceeds its bound");
 });
-
-it.each([12, 0, undefined])("accepts optional source metadata coverage: %s", async (pending) => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-    jsonResponse(await page({ source_metadata_pending: pending })),
-  );
-  const result = await createSnapshot(
-    "session",
-    query,
-    { page_size: 50, facets: ["tags"] },
-    new AbortController().signal,
-  );
-  expect(result.source_metadata_pending).toBe(pending);
-});
-it.each([-1, 0.5, null, "12"])("rejects invalid source metadata coverage: %s", async (pending) => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-    jsonResponse(await page({ source_metadata_pending: pending })),
-  );
-  await expect(
-    createSnapshot(
-      "session",
-      query,
-      { page_size: 50, facets: ["tags"] },
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow("source_metadata_pending");
-});

@@ -362,7 +362,7 @@ func TestPDFFilterCLIRequestAndEcho(t *testing.T) {
 			requests++
 			assert.Equal(t, filter, r.URL.Query().Get("pdf_filter"))
 			assert.Empty(t, r.URL.Query().Get("q"))
-			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{PDFFilter: filter, SourceMetadataPending: new(int64(2)), Limit: 50, Hits: []api.SearchHit{
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{PDFFilter: filter, Limit: 50, Hits: []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "evidence.pdf"}, Path: "/evidence.pdf", Match: "filter"},
 			}}))
 			return
@@ -378,8 +378,6 @@ func TestPDFFilterCLIRequestAndEcho(t *testing.T) {
 	var report api.SearchReport
 	require.NoError(t, json.Unmarshal([]byte(output), &report))
 	assert.Equal(t, filter, report.PDFFilter)
-	require.NotNil(t, report.SourceMetadataPending)
-	assert.EqualValues(t, 2, *report.SourceMetadataPending)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, "/evidence.pdf", report.Hits[0].Path)
 	assert.Equal(t, 1, requests)

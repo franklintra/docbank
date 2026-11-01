@@ -295,26 +295,13 @@ func TestDocumentSummaryResolveRejectsDuplicateIdentity(t *testing.T) {
 
 func TestPDFFilterHTTPValidationAndEcho(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, configureProcessingTestService(t))
-	for _, text := range []string{"pdf_has_javascript:true", "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"} {
-		response, body := get(t, ts, "/api/v1/search?pdf_filter="+url.QueryEscape(text), nil)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var report api.SearchReport
-		require.NoError(t, json.Unmarshal([]byte(body), &report))
-		assert.Equal(t, text, report.PDFFilter)
-		assert.Empty(t, report.Hits)
-		require.NotNil(t, report.SourceMetadataPending)
-		assert.Zero(t, *report.SourceMetadataPending)
-	}
-	createFileWithContent(t, ts, s, "/pending.txt", "synthetic metadata pending")
-	response, body := get(t, ts, "/api/v1/search?pdf_filter=pdf_has_javascript:true", nil)
+	ts, _ := newTestServer(t, configureProcessingTestService(t))
+	text := "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"
+	response, body := get(t, ts, "/api/v1/search?pdf_filter="+url.QueryEscape(text), nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	assert.Contains(t, body, `"source_metadata_pending":1`)
-	response, body = get(t, ts, "/api/v1/search?q=pending", nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	assert.NotContains(t, body, `"source_metadata_pending"`)
-	for _, text := range []string{"name:report", "pdf_encrypted:yes"} {
-		response, body := get(t, ts, "/api/v1/search?pdf_filter="+url.QueryEscape(text), nil)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	}
+	var report api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, text, report.PDFFilter)
+	response, body = get(t, ts, "/api/v1/search?pdf_filter=pdf_encrypted:yes", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }

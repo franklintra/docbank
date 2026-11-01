@@ -41,11 +41,10 @@ type lexicalOperand struct {
 }
 
 type compiledQueryFragment struct {
-	lexical      []lexicalOperand
-	sql          string
-	args         []any
-	relations    compiledQueryRelations
-	usesPDFFacts bool
+	lexical   []lexicalOperand
+	sql       string
+	args      []any
+	relations compiledQueryRelations
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -339,7 +338,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
 			WHERE saved_population.node_id=n.id
 			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical, usesPDFFacts: nested.usesPDFFacts,
+		args: population.args, relations: population.relations, lexical: nested.lexical,
 	}, nil
 }
 
@@ -629,7 +628,7 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 		lexical[i].negated = !lexical[i].negated
 	}
 	return compiledQueryFragment{
-		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical, usesPDFFacts: fragment.usesPDFFacts,
+		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical,
 	}
 }
 
@@ -648,7 +647,6 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 	var args []any
 	var relations compiledQueryRelations
 	var lexical []lexicalOperand
-	var usesPDFFacts bool
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
@@ -656,10 +654,9 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 		sqlParts = append(sqlParts, `(`+part.sql+`)`)
 		args = append(args, part.args...)
 		relations |= part.relations
-		usesPDFFacts = usesPDFFacts || part.usesPDFFacts
 		lexical = append(lexical, part.lexical...)
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical, usesPDFFacts: usesPDFFacts}
+	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {

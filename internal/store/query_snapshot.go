@@ -44,8 +44,6 @@ type SnapshotRequest struct {
 	Coverage           CoverageSelection `json:"coverage"`
 	PageSize           int               `json:"page_size"`
 	Facets             []string          `json:"facets"`
-
-	SourceMetadataFingerprint string `json:"-"`
 }
 
 // SnapshotMember is the exact node/content authority frozen by a snapshot.
@@ -128,8 +126,6 @@ type SnapshotProjection struct {
 	Rows                []SnapshotRow      `json:"rows"`
 	Facets              []SnapshotFacet    `json:"facets"`
 	SerializedBytes     int64              `json:"-"`
-
-	SourceMetadataPending *int64 `json:"source_metadata_pending,omitzero"`
 }
 
 type snapshotMaterializeOptions struct {
@@ -259,13 +255,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
-		}
-		if compiled.predicate.usesPDFFacts {
-			count, countErr := sourceMetadataPending(ctx, q, request.SourceMetadataFingerprint)
-			if countErr != nil {
-				return countErr
-			}
-			projection.SourceMetadataPending = &count
 		}
 		if generation.ID != "" {
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
@@ -567,15 +556,12 @@ type snapshotFingerprintPayload struct {
 	Coverage     CoverageSelection  `json:"coverage"`
 	Rows         []SnapshotRow      `json:"rows"`
 	Facets       []SnapshotFacet    `json:"facets"`
-
-	SourceMetadataPending *int64 `json:"source_metadata_pending,omitzero"`
 }
 
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		SourceMetadataPending: projection.SourceMetadataPending,
-		Photos:                projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {

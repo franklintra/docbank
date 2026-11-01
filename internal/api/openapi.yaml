@@ -19259,10 +19259,6 @@ components:
           type: string
         pdf_filter:
           type: string
-        source_metadata_pending:
-          format: int64
-          minimum: 0
-          type: integer
         source_present:
           type: boolean
         tag_id:
@@ -21942,10 +21938,6 @@ components:
         snapshot_id:
           pattern: ^[0-9a-f]{32}$
           type: string
-        source_metadata_pending:
-          format: int64
-          minimum: 0
-          type: integer
         total:
           format: int64
           minimum: 0

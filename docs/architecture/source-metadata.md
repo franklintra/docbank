@@ -107,9 +107,7 @@ The extractor version change queues existing originals for the daemon's usual
 metadata backfill. Re-extraction retains prior evidence generations and leaves
 the original bytes unchanged.
 
-PDF search predicates read the active generation for the current content hash. Metadata reads, PDF predicates, and coverage counts share canonical-byte, checksum, and contract validation. Invalid generations contribute no PDF fields and remain pending. They match the field key, `pdf.info` namespace, value kind, and typed value. Missing observations match neither false nor zero; permissions use exact list membership. CLI `--pdf-filter` and web Query syntax share these predicates without a projection table or schema change.
-
-PDF queries also count live current file nodes whose bytes lack a valid active generation with the current contract and extractor fingerprint. The count covers all MIME labels and folders, including aliases, while excluding directories and trash. Workspace and saved-query snapshots freeze `source_metadata_pending` in the same read transaction as membership; pagination retains it, and rerunning refreshes it. Ordinary queries omit the count. Zero establishes current extraction coverage, while individual PDF facts may still be unknown. See [PDF evidence filters](../usage/searching.md#find-pdfs-by-recorded-evidence).
+PDF search predicates read the active generation for the current content hash. Metadata reads and PDF predicates share canonical-byte, checksum, and contract validation. Invalid generations contribute no PDF fields. They match the field key, `pdf.info` namespace, value kind, and typed value. Missing observations match neither false nor zero; permissions use exact list membership. CLI `--pdf-filter` and web Query syntax share these predicates without a projection table or schema change. See [PDF evidence filters](../usage/searching.md#find-pdfs-by-recorded-evidence).
 
 ## Current format boundary
 

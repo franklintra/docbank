@@ -84,7 +84,6 @@ func TestPDFFilterRejectsUnsupportedSearchModes(t *testing.T) {
 		{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"},
 		{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"},
 		{"search", "draft", "--mode", "hybrid", "--pdf-filter", "pdf_encrypted:true"},
-		{"search", "--pdf-filter", "pdf_encrypted:yes"},
 	} {
 		_, err := runCLI(t, args...)
 		require.Error(t, err)

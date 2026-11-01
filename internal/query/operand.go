@@ -55,29 +55,37 @@ func ParseSizeOperand(value string) (int64, error) {
 
 func validSizeBound(value int64) bool { return value >= 0 && value <= maxSafeInteger }
 
+var pdfFieldKinds = map[string]string{
+	"pdf_encrypted":                  "boolean",
+	"pdf_last_signature_covers_file": "boolean",
+	"pdf_has_javascript":             "boolean",
+	"pdf_has_launch_actions":         "boolean",
+	"pdf_permissions":                "string_list",
+	"pdf_signature_field_count":      "integer",
+	"pdf_signature_field_count_min":  "integer",
+	"pdf_signature_field_count_max":  "integer",
+	"pdf_embedded_file_count":        "integer",
+	"pdf_embedded_file_count_min":    "integer",
+	"pdf_embedded_file_count_max":    "integer",
+}
+
 // PDFFieldKind reports the recorded value kind for a PDF query field.
-func PDFFieldKind(field string) string {
-	base := strings.TrimSuffix(strings.TrimSuffix(field, "_min"), "_max")
-	switch base {
-	case "pdf_signature_field_count", "pdf_embedded_file_count":
-		return "integer"
+func PDFFieldKind(field string) string { return pdfFieldKinds[field] }
+
+// PDFFieldComparison separates a fact field from its optional range bound.
+func PDFFieldComparison(field string) (string, string) {
+	if base, ok := strings.CutSuffix(field, "_min"); ok {
+		return base, ">="
 	}
-	switch field {
-	case "pdf_encrypted", "pdf_last_signature_covers_file", "pdf_has_javascript", "pdf_has_launch_actions":
-		return "boolean"
-	case "pdf_permissions":
-		return "string_list"
+	if base, ok := strings.CutSuffix(field, "_max"); ok {
+		return base, "<="
 	}
-	return ""
+	return field, "="
 }
 
 func withPDFFields(fields map[string]struct{}) map[string]struct{} {
-	for _, field := range []string{"pdf_encrypted", "pdf_last_signature_covers_file", "pdf_has_javascript", "pdf_has_launch_actions", "pdf_permissions", "pdf_signature_field_count", "pdf_embedded_file_count"} {
+	for field := range pdfFieldKinds {
 		fields[field] = struct{}{}
-		if PDFFieldKind(field) == "integer" {
-			fields[field+"_min"] = struct{}{}
-			fields[field+"_max"] = struct{}{}
-		}
 	}
 	return fields
 }

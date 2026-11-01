@@ -4461,12 +4461,6 @@
                     data-snapshot-id={snapshotPage.snapshot_id}
                     data-member-hash={snapshotPage.member_hash}
                   >
-                    {#if (snapshotPage.source_metadata_pending ?? 0) > 0}
-                      <div class="banner search-note" role="status">
-                        {snapshotPage.source_metadata_pending} live files across this vault lack current
-                        metadata. PDF results may be incomplete.
-                      </div>
-                    {/if}
                     {#if snapshotPage.rows.length === 0}
                       <EmptyState title="No matching documents">
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}

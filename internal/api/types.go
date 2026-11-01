@@ -932,8 +932,6 @@ type SearchReport struct {
 	UnderNodeID    int64         `json:"under_node_id,omitzero"`
 	ModifiedSince  string        `json:"modified_since,omitzero"`
 	ModifiedBefore string        `json:"modified_before,omitzero"`
-
-	SourceMetadataPending *int64 `json:"source_metadata_pending,omitzero" minimum:"0" nullable:"false"`
 }
 
 // IngestFailure records one source path that failed to import.

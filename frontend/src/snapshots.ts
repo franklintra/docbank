@@ -59,7 +59,6 @@ export interface SnapshotRow {
 }
 
 export interface WorkspaceQueryResponse {
-  source_metadata_pending?: number;
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved" | "person"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -594,7 +593,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
       "created_at",
       "expires_at",
     ],
-    ["$schema", "previous_cursor", "next_cursor", "source_metadata_pending"],
+    ["$schema", "previous_cursor", "next_cursor"],
     "receipt",
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
@@ -647,11 +646,6 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     page_size: pageSize,
     total,
     total_bytes: totalBytes,
-    ...(raw.source_metadata_pending === undefined
-      ? {}
-      : {
-          source_metadata_pending: integer(raw.source_metadata_pending, "source_metadata_pending"),
-        }),
     rows,
     facets,
     snapshot: true,
@@ -822,7 +816,6 @@ function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
     left.page_size === right.page_size &&
     left.total === right.total &&
     left.total_bytes === right.total_bytes &&
-    left.source_metadata_pending === right.source_metadata_pending &&
     JSON.stringify(left.facets) === JSON.stringify(right.facets) &&
     left.snapshot_id === right.snapshot_id &&
     left.created_at === right.created_at
