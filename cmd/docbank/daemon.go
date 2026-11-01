@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -307,6 +308,39 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+
+	choice, err := readLocalText(layout.Root)
+	if err != nil {
+		return fmt.Errorf("read local text selection: %w", err)
+	}
+	baseConfig := cfg
+	candidateProfiles := func(name, mode string) (map[string]processing.ProfileConfig, config.Config, bool, bool, error) {
+		candidate, managed, rebuild, err := localTextCandidate(baseConfig, name, mode)
+		if err != nil {
+			return nil, candidate, false, false, err
+		}
+		bundle, err := configureEmbeddingRuntimeBundle(candidate, blobs, layout.BlobTmpDir())
+		if err != nil {
+			return nil, candidate, false, false, err
+		}
+		profiles, err := executableProcessingProfiles(candidate, bundle)
+		return profiles, candidate, managed, rebuild, err
+	}
+	if choice.Profile != "" {
+		selected, candidate, _, _, err := candidateProfiles(choice.Profile, choice.Server)
+		if err != nil {
+			return fmt.Errorf("restore local text selection: %w", err)
+		}
+		p, ok := selected[choice.Profile]
+		if !ok {
+			return processing.ErrProfileNotConfigured
+		}
+		cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, p)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, watch := range cfg.Watches {
 		if watch.Profile != "" {
 			if _, ok := processingProfiles[watch.Profile]; !ok {
@@ -348,6 +382,28 @@ func runServe(ctx context.Context) (retErr error) {
 	})
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
+	}
+
+	localText := &processing.LocalTextSetup{Service: processingService, DefaultProfile: defaultLocalTextProfile(baseConfig), Selected: choice.Profile,
+		Startup: localTextStartup,
+		Save: func(name, mode string) error {
+			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
+		},
+		Remove: func() error { return os.Remove(filepath.Join(layout.Root, "local-text.json")) },
+	}
+	localText.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
+		profiles, _, managed, rebuild, err := candidateProfiles(name, mode)
+		if err != nil {
+			return nil, false, false, err
+		}
+		service, err := processing.NewService(processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
+			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+		return service, managed, rebuild, err
+	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.Start("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
+			return err
+		}
 	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
@@ -635,7 +691,7 @@ func runServe(ctx context.Context) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,

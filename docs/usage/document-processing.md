@@ -19,9 +19,29 @@ The daemon exposes only profiles it can execute:
 docbank processing profiles
 ```
 
-The default configuration has no processing profiles. Configure a processing
-profile, the retrieval profile it references, and any rendition or embedding
-profiles it references, then use a profile name listed by this command.
+## Set up local text search
+
+```bash
+docbank processing local --server local
+```
+
+The command reviews the profile, model, server, vector-space effect, eligible document count, and missing download size before one confirmation. A fresh installation uses the built-in `local-text` profile with `nomic-embed-text` and the existing plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
+
+Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background, reuses matching vectors, and resumes after a daemon restart. Revoking processing consent stops provider calls.
+
+Choose `--server auto` to keep a configured endpoint or prefer a running Ollama before the shared server. Choose `--server local` to use the shared `kennembed` server even when Ollama or a configured endpoint is present. Downloads use Kit's shared installation and require approval before network access. An already installed server still requires approval, with a zero-byte download shown.
+
+To switch an existing profile:
+
+```bash
+docbank processing local --profile archive --server local
+```
+
+A Nomic profile keeps its recipe and vector space. Existing inputs reuse their vectors, and new inputs are embedded. For another model, the preview shows the Nomic text recipe and warns that the new vector space requires a rebuilt index. The approved profile name continues to select the chosen server for search. The daemon's changing loopback port doesn't change consent; changing the service, model, recipe, or server mode needs another approval.
+
+Declining, cancellation before apply, and failed server startup leave the saved choice unchanged. The eligible count is an estimate; new imports keep the same ongoing approval. Setup restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
+
+For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
 

@@ -2634,6 +2634,9 @@ func canonicalRuntimeDisclosure(value RuntimeDisclosure, trustBoundary string) (
 }
 
 func canonicalDisclosureEndpoint(raw, trustBoundary string) (string, error) {
+	if raw == "managed://kit-embed/auto" || raw == "managed://kit-embed/local" {
+		return raw, nil
+	}
 	local := trustBoundary == string(document.RenditionTrustLocalProcess) ||
 		trustBoundary == string(document.EmbeddingTrustLocalProcess)
 	if local {
