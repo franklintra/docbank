@@ -2655,7 +2655,7 @@ func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, nam
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
-		return receipt, fmt.Errorf("decoding upload response: %w", err)
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("decoding upload response: %w", err)}
 	}
 	return validateUploadReceipt(receipt, expectedHash, expectedSize)
 }
