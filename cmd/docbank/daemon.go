@@ -722,7 +722,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
 		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, localText.Pending, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)
@@ -1308,7 +1308,7 @@ func listenWebOriginWithIdentity(
 // idleWatch exits an auto-started daemon after a fully quiet window so
 // spawned daemons don't accumulate. Foreground `daemon run` never idles out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
-	logger *slog.Logger, stop func()) {
+	logger *slog.Logger, pending func(context.Context) (bool, error), stop func()) {
 	jobs.ReportBusy(ctx, false)
 	// Clamp the poll interval: NewTicker panics on a non-positive duration,
 	// and a pathologically small configured timeout must not spin.
@@ -1320,7 +1320,7 @@ func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duratio
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if t.IdleFor() >= timeout {
+			if t.IdleFor() >= timeout && localTextIdle(ctx, t, timeout, pending, logger) {
 				logger.Info("idle timeout reached, shutting down", "idle", timeout.String())
 				stop()
 				return
@@ -1355,4 +1355,19 @@ func randomHex32() (string, error) {
 		return "", fmt.Errorf("reading random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// localTextIdle closes the gap between the last lane sweep and idle shutdown.
+func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout time.Duration, pending func(context.Context) (bool, error), logger *slog.Logger) bool {
+	busy, err := pending(ctx)
+	if err != nil {
+		logger.Warn("check local text work before idle shutdown", "error", err)
+		return false
+	}
+	if busy {
+		tracker.Begin()
+		tracker.End()
+		return false
+	}
+	return tracker.IdleFor() >= timeout
 }

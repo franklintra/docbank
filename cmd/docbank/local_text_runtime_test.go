@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -136,10 +138,12 @@ func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
 }
 
 func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
+	bin := buildDocbank(t)
 	for _, result := range []struct {
-		name    string
-		invalid bool
-	}{{"completed", false}, {"invalid_response", true}} {
+		name       string
+		invalid    bool
+		lateImport bool
+	}{{"completed", false, false}, {"invalid_response", true, false}, {"new_import", false, true}} {
 		t.Run(result.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("DO_NOT_TRACK", "1")
@@ -221,11 +225,30 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 				require.NoError(t, err)
 				profileFingerprint, version = plan.ProfileFingerprint, node.CurrentVersionID
+				if result.lateImport {
+					_, _, err = catalog.Trash(t.Context(), node.ID, node.Revision)
+					require.NoError(t, err)
+				}
 			}()
 			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
 			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
 			stop := startServe(t)
 			defer stop()
+			if result.lateImport {
+				waitForDaemon(t, root)
+				time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: place the import between the real lane's initial scan and next wall-clock poll
+				source := filepath.Join(t.TempDir(), "new.txt")
+				require.NoError(t, os.WriteFile(source, []byte("new synthetic local text"), 0600))
+				command := exec.CommandContext(t.Context(), bin, "add", source)
+				output, err := command.CombinedOutput()
+				require.NoError(t, err, string(output))
+				catalog, err := store.Open(layout.DBPath())
+				require.NoError(t, err)
+				imported, err := catalog.NodeByPath(t.Context(), "/inbox/new.txt")
+				require.NoError(t, err)
+				version = imported.CurrentVersionID
+				require.NoError(t, catalog.Close())
+			}
 			select {
 			case <-started:
 			case <-time.After(5 * time.Second):
@@ -341,4 +364,60 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, attackerText)
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
+}
+
+func TestLocalTextApprovalSurvivesDaemonIdleExit(t *testing.T) {
+	bin := buildDocbank(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DO_NOT_TRACK", "1")
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
+	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+	server := httptest.NewServer(ping)
+	defer server.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, bin, "processing", "local", "--server", "local")
+	input, err := command.StdinPipe()
+	require.NoError(t, err)
+	defer func() { _ = input.Close() }()
+	output, err := os.CreateTemp(t.TempDir(), "command-output-")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, output.Close()) }()
+	command.Stdout, command.Stderr = output, output
+	require.NoError(t, command.Start())
+	waited := false
+	defer func() {
+		cancel()
+		if !waited {
+			_ = command.Wait()
+		}
+		_, _ = daemonconn.Stop(context.Background(), root)
+	}()
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(output.Name())
+		return err == nil && strings.Contains(string(data), "[y/N]")
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		records, err := daemonconn.RuntimeStore(root).List()
+		return err == nil && len(records) == 0
+	}, 5*time.Second, 20*time.Millisecond, "approval remains open after the preview daemon idles out")
+	_, err = io.WriteString(input, "y\n")
+	require.NoError(t, err)
+	require.NoError(t, input.Close())
+	err = command.Wait()
+	waited = true
+	data, readErr := os.ReadFile(output.Name())
+	require.NoError(t, readErr)
+	require.NoError(t, err, string(data))
+	choice, err := readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, config.LocalTextProfile, choice.Profile)
 }

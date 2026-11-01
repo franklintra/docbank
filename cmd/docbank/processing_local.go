@@ -37,16 +37,13 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err := writeLocalTextPlan(cmd, *plan); err != nil {
 				return err
 			}
+			if err := closeClient(); err != nil {
+				return err
+			}
 			if err := approveLocalText(cmd, plan.Managed); err != nil {
 				return err
 			}
-			_, err = c.API().ApplyLocalText(cmd.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{
-				Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true,
-			}})
-			if err != nil {
-				return err
-			}
-			if err := closeClient(); err != nil {
+			if err := applyLocalText(cmd.Context(), *plan); err != nil {
 				return err
 			}
 			layout, err := home.Resolve()
@@ -69,6 +66,17 @@ func newProcessingLocalCommand() *cobra.Command {
 		}}
 	cmd.Flags().StringVar(&server, "server", "auto", "embedding server: auto or local")
 	return cmd
+}
+
+// applyLocalText acquires a fresh proven connection after approval and download.
+func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) {
+	c, err := daemonconn.Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, c.Close()) }()
+	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}})
+	return err
 }
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {

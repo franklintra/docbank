@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
@@ -45,7 +46,7 @@ type LocalTextSetup struct {
 	ActivityBegin func()
 	ActivityEnd   func()
 	mu            sync.Mutex
-	// The backfill lane owns these across its sequential list/process pages.
+	// mu also guards the skip cache during the daemon's final idle check.
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
 	logger     *slog.Logger
@@ -119,6 +120,12 @@ func (setup *LocalTextSetup) Apply(ctx context.Context, mode, fingerprint string
 }
 
 func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
+	setup.mu.Lock()
+	defer setup.mu.Unlock()
+	return setup.listTargets(ctx, after, limit, true)
+}
+
+func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {
 	profile, ok := setup.Service.profiles[setup.Selected]
 	if !ok {
 		return nil, nil
@@ -155,7 +162,9 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 			}
 			key := localTextSkipKey{item.ContentVersionID, item.Name}
 			if skip, ok := setup.skips[key]; ok {
-				skip.seen = true
+				if sweep {
+					skip.seen = true
+				}
 				continue
 			}
 			result = append(result, item)
@@ -164,7 +173,7 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 			}
 		}
 		if len(items) < 1000 {
-			if len(result) == 0 {
+			if len(result) == 0 && sweep {
 				for key, skip := range setup.skips {
 					if !skip.seen {
 						delete(setup.skips, key)
@@ -227,10 +236,9 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 }
 
 func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
-	logger := setup.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
+	setup.mu.Lock()
+	defer setup.mu.Unlock()
+	logger := cmp.Or(setup.logger, slog.Default())
 	if setup.skips == nil {
 		setup.skips = make(map[localTextSkipKey]*localTextSkip)
 	}
@@ -247,6 +255,21 @@ func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 		logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
 		setup.skipWarned = true
 	}
+}
+
+// Pending checks current work before idle shutdown, including imports admitted
+// between lane polls. It leaves the lane's sweep/pruning bookkeeping intact.
+func (setup *LocalTextSetup) Pending(ctx context.Context) (bool, error) {
+	setup.mu.Lock()
+	defer setup.mu.Unlock()
+	items, err := setup.listTargets(ctx, "", 1, false)
+	if err != nil {
+		return false, err
+	}
+	if len(items) > 0 {
+		return true, nil
+	}
+	return setup.publicationPending(ctx)
 }
 
 // publicationPending compares the publisher's active manifest with current
