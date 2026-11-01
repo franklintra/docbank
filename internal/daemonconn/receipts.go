@@ -1015,11 +1015,6 @@ func (c *Connection) SearchWithOptions(
 	if err != nil {
 		return out, err
 	}
-	if opts.PDFFilter != "" {
-		if err := store.ValidatePDFFilter(opts.PDFFilter); err != nil {
-			return out, err
-		}
-	}
 	params := apiclient.SearchQuery{}
 	if opts.PDFFilter != "" {
 		params.PdfFilter = new(opts.PDFFilter)

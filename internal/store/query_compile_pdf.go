@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 
 	"go.kenn.io/docbank/internal/query"
@@ -43,41 +44,12 @@ func ValidatePDFFilter(text string) error {
 }
 
 func compilePDFFilter(text string) (compiledQueryFragment, error) {
-	syntax, err := query.ParseExpression(text, "advanced")
+	compiled, err := (queryCompiler{pdfOnly: true}).compile(context.Background(), query.Query{
+		V: 1, Text: text, Syntax: "advanced", Mode: "lexical",
+		Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"},
+	}, nil)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	return compilePDFExpression(syntax, "")
-}
-
-func compilePDFExpression(syntax *query.Expression, field string) (compiledQueryFragment, error) {
-	switch syntax.Kind {
-	case query.ExpressionAll, query.ExpressionNear:
-	case query.ExpressionField:
-		if field == "" && query.PDFFieldKind(syntax.Field) != "" {
-			return compilePDFExpression(syntax.Children[0], syntax.Field)
-		}
-	case query.ExpressionAnd, query.ExpressionOr, query.ExpressionNot:
-		parts := make([]compiledQueryFragment, 0, len(syntax.Children))
-		for _, child := range syntax.Children {
-			part, err := compilePDFExpression(child, field)
-			if err != nil {
-				return compiledQueryFragment{}, err
-			}
-			parts = append(parts, part)
-		}
-		if syntax.Kind == query.ExpressionNot {
-			return negateCompiledFragment(parts[0]), nil
-		}
-		operator := " AND "
-		if syntax.Kind == query.ExpressionOr {
-			operator = " OR "
-		}
-		return joinCompiledFragments(parts, operator), nil
-	case query.ExpressionTerm, query.ExpressionPhrase:
-		if field != "" && !syntax.Prefix {
-			return compilePDFPredicate(field, syntax.Value, syntax.Start, syntax.End)
-		}
-	}
-	return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields and exact operands")
+	return compiled.bind("", nil)
 }

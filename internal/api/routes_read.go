@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -397,11 +398,6 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
-		if in.PDFFilter != "" {
-			if err := store.ValidatePDFFilter(in.PDFFilter); err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-			}
-		}
 		opts := store.SearchOptions{
 			PDFFilter: in.PDFFilter, SourcePresent: in.SourcePresent,
 			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
@@ -418,7 +414,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			hits, truncated, err = d.Store.SearchPageWithOptions(ctx, in.Q, in.Limit, opts)
 		}
 		if err != nil {
-			if errors.Is(err, store.ErrFuzzyQuery) {
+			if _, expressionError := errors.AsType[*query.ExpressionError](err); expressionError || errors.Is(err, store.ErrFuzzyQuery) {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 			}
 			return nil, FromStoreError(err)

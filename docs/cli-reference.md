@@ -1024,7 +1024,7 @@ canonical UTC before the request.
 
 Use `--pdf-filter` for a Boolean expression over recorded PDF facts, such as
 `pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. See
-[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations.
+[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. For a full-vault review, wait until `extract:source-metadata` is idle in `docbank jobs`.
 
 The query can be omitted for a bounded filter page when `--tag`,
 `--modified-since`, `--modified-before`, or `--pdf-filter` is supplied. These results are

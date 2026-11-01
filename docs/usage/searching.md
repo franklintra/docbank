@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -59,7 +59,11 @@ docbank search --pdf-filter 'pdf_permissions:"Print"' --under /cases
 
 Append `_min` or `_max` to either count field for an inclusive bound. Combine fields with `AND`, `OR`, `NOT`, and parentheses. Quote permission labels containing spaces. Labels are Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, High-quality print flag, and None.
 
+For a full-vault review, wait until **Reading file metadata** is idle in **Jobs**, or `extract:source-metadata` is idle in `docbank jobs`. Background processing can still be recording facts after an import or upgrade.
+
 Only recorded observations match. An unknown observation matches neither `false` nor zero. `NOT` excludes matching documents and can include documents with unknown observations. Only the active evidence for the current file bytes counts. Signature coverage describes the declared byte range, without authenticating the signer. See [PDF evidence](../architecture/source-metadata.md#pdf-evidence) for the facts' limits.
+
+MIME filters narrow the result type. Add `--mime-type application/pdf`, or `mime:application/pdf` in Query syntax, when you want only files labeled as PDFs. Evidence belongs to the bytes, so an alias labeled with a different MIME type can share the same facts. `NOT` can also include non-PDF files with unknown observations; it excludes folders.
 
 The CLI accepts only PDF fields in `--pdf-filter`. It can anchor a search without text and combine with tag, MIME, folder, time, and fuzzy filters. It keeps automatic search lexical and rejects explicit processing-search options and `--similar-to`. HTTP search accepts `pdf_filter` and echoes the expression in its response.
 

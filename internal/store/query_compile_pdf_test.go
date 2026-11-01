@@ -127,3 +127,18 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 		assert.Error(t, ValidatePDFFilter(text), text)
 	}
 }
+
+func TestPDFFilterNegationExcludesDirectories(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.Mkdir(t.Context(), s.RootID(), "review-folder")
+	require.NoError(t, err)
+	file, err := s.CreateFile(t.Context(), s.RootID(), "review.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	for _, text := range []string{"", "review"} {
+		hits, _, err := s.SearchPageWithOptions(t.Context(), text, 50, SearchOptions{PDFFilter: "NOT pdf_has_javascript:true"})
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, file.ID, hits[0].Node.ID)
+	}
+}

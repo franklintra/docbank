@@ -68,6 +68,9 @@ appends matching folders. Filters, --fuzzy, --limit above
 plus folders.
 --agent prints an OK header and one line per hit.
 --fuzzy appends filename/path matches with one typo.
+PDF filters use recorded file metadata. For a full-vault review, wait until
+source-metadata processing is idle in docbank jobs. MIME filters narrow the
+result type.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
 	GroupID: groupSearch,

@@ -70,6 +70,7 @@ func compileQuery(
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
 	photoDisplayMetadata bool
+	pdfOnly              bool
 	photoHidden          bool
 }
 
@@ -176,11 +177,14 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 	syntax := expression.Syntax
 	switch syntax.Kind {
 	case query.ExpressionAll:
-		if field != "" {
+		if field != "" || c.pdfOnly {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
 		}
 		return trueCompiledFragment(), nil
 	case query.ExpressionField:
+		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
+		}
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
@@ -237,6 +241,9 @@ func (c queryCompiler) compileAssociativeChildren(
 
 func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
+	if c.pdfOnly && query.PDFFieldKind(field) == "" {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
+	}
 	if syntax.Value == "" && field != "flag" && field != "label" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
 	}
@@ -288,7 +295,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 
 func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
-	if field != "" && field != compiledNameField {
+	if c.pdfOnly || field != "" && field != compiledNameField {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "NEAR is supported only for text and name operands")
 	}
 	if len(expression.Children) != 2 {
