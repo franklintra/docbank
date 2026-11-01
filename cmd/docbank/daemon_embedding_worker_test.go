@@ -372,6 +372,15 @@ func TestEmbeddingRuntimeClassifiesMalformedOpenAIResponses(t *testing.T) {
 	}
 }
 
+func TestEmbeddingRuntimeClassifiesManagedOriginStartupFailures(t *testing.T) {
+	t.Parallel()
+	startup := fmt.Errorf("start embeddings server: %w", errors.New("synthetic startup failure"))
+	err := fmt.Errorf("%w: resolve managed origin: %w", openaicompat.ErrTransientResponse, startup)
+	classification, delay := classifyOpenAIEmbeddingError(err)
+	require.Equal(t, processing.EmbeddingProviderTransient, classification)
+	require.Zero(t, delay)
+}
+
 func TestEmbeddingRuntimeClassifiesMalformedVoyageResponses(t *testing.T) {
 	for _, err := range []error{voyage.ErrMalformedResponse, &voyage.ProviderError{Kind: voyage.ErrMalformedResponse}} {
 		kind, delay := classifyVoyageEmbeddingError(err)
