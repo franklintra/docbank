@@ -310,7 +310,8 @@ func runServe(ctx context.Context) (retErr error) {
 
 	choice, err := readLocalText(layout.Root)
 	if err != nil {
-		return fmt.Errorf("read local text selection: %w", err)
+		logger.Warn("read local text selection; indexing remains inactive", "error", err)
+		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
 	candidateProfiles := func(name, mode string) (map[string]processing.ProfileConfig, config.Config, bool, bool, error) {
@@ -327,21 +328,12 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if choice.Profile != "" {
 		selected, candidate, _, _, err := candidateProfiles(choice.Profile, choice.Server)
-		if errors.Is(err, processing.ErrProfileNotConfigured) {
-			logger.Warn("local text selection is unavailable; indexing remains inactive", "profile", choice.Profile, "error", err)
-			choice = config.LocalTextConfig{}
-		} else if err != nil {
-			return fmt.Errorf("restore local text selection: %w", err)
+		if err == nil {
+			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
-		if choice.Profile != "" {
-			p, ok := selected[choice.Profile]
-			if !ok {
-				return processing.ErrProfileNotConfigured
-			}
-			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, p)
-			if err != nil {
-				return err
-			}
+		if err != nil {
+			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
+			choice = config.LocalTextConfig{}
 		}
 	}
 

@@ -387,7 +387,7 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if client.profile.ManagedService != "" {
 		origin, err := client.profile.ResolveOrigin(request.Context())
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: resolve managed origin: %w", ErrTransientResponse, err)
 		}
 		origin, err = validateOrigin(origin)
 		if err != nil {

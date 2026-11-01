@@ -849,9 +849,6 @@ func fromProcessingError(err error) error {
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
-	if errors.Is(err, processing.ErrConsentSaved) {
-		return NewError(http.StatusInternalServerError, "processing_failed", err.Error())
-	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
 }
 

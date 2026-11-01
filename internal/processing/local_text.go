@@ -10,9 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/kit/atomicfile"
 )
 
 var ErrLocalTextConfiguration = errors.New("unsupported local text configuration")
@@ -41,7 +39,6 @@ type LocalTextSetup struct {
 	Startup        func(context.Context, bool, string) error
 	Save           func(string, string) error
 	mu             sync.Mutex
-	ineligible     map[string]struct{}
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (LocalTextPlan, *Service, error) {
@@ -110,10 +107,7 @@ func (setup *LocalTextSetup) Apply(ctx context.Context, name, mode, fingerprint 
 		return LocalTextPlan{}, err
 	}
 	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) }); err != nil {
-		if errors.Is(err, atomicfile.ErrPublished) {
-			return LocalTextPlan{}, fmt.Errorf("%w: local text selection was published but its durability check failed: %w", ErrConsentSaved, err)
-		}
-		return LocalTextPlan{}, fmt.Errorf("%w: local text selection could not be saved; previous selection remains: %w", ErrConsentSaved, err)
+		return LocalTextPlan{}, fmt.Errorf("%w: save local text selection: %w", ErrConsentSaved, err)
 	}
 
 	return plan, nil
@@ -138,26 +132,12 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 }
 
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
-	if _, found := setup.ineligible[item.ContentVersionID]; found {
-		return nil
-	}
 	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
 	plan, err := setup.Service.Plan(ctx, selector)
 	if err != nil {
 		return err
 	}
 	if plan.RenditionIneligibleReason != "" {
-		if plan.RenditionIneligibleReason != string(media.CapabilityReasonPDFPasswordRequired) {
-			// Source versions and the selected runtime policy are immutable.
-			// Password availability can change without changing either identity.
-			if setup.ineligible == nil {
-				setup.ineligible = make(map[string]struct{})
-			}
-			if len(setup.ineligible) == 1024 {
-				clear(setup.ineligible)
-			}
-			setup.ineligible[item.ContentVersionID] = struct{}{}
-		}
 		return nil
 	}
 	_, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})

@@ -17,7 +17,7 @@ import (
 func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	t.Parallel()
 	var saves, starts atomic.Int64
-	var startupFailure, unsupported atomic.Bool
+	var startupFailure, saveFailure, unsupported atomic.Bool
 	startupFailure.Store(true)
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
 		configure := configureProcessingTestServiceWithEmbeddingProvider(t, newProcessingTestEmbeddingProvider(t), true)
@@ -33,6 +33,9 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 			Save: func(name, mode string) error {
 				require.Equal(t, "private", name)
 				require.Equal(t, "local", mode)
+				if saveFailure.Load() {
+					return errors.New("synthetic selection path failure")
+				}
 				saves.Add(1)
 				return nil
 			},
@@ -82,6 +85,11 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Equal(t, int64(1), saves.Load(), "an imported document doesn't invalidate reviewed ongoing scope")
+	saveFailure.Store(true)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
+	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
+	require.Contains(t, body, "processing consent was saved: document processing failed")
+	require.NotContains(t, body, "synthetic selection path failure")
 	request.PlanFingerprint = testHash("stale")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)

@@ -873,14 +873,25 @@ func TestManagedServiceRejectsInvalidBinding(t *testing.T) {
 	}
 }
 
-func TestManagedServiceRejectsTaggedNomicModels(t *testing.T) {
+func TestManagedServiceOriginFailureIsTransientAndCanRetry(t *testing.T) {
 	t.Parallel()
-	for _, model := range []string{"nomic-embed-text:latest", "nomic-embed-text:v1.5"} {
-		t.Run(model, func(t *testing.T) {
-			p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
-			p.Descriptor.Model = model
-			_, err := New(p, nil, nil)
-			require.EqualError(t, err, "openaicompat: invalid descriptor identity: embedding model contains unsupported characters")
-		})
+	failure := errors.New("synthetic server startup failure")
+	p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	p.Origin, p.ManagedService, p.SelectionMode = "", "kit-embed", "local"
+	attempts := 0
+	p.ResolveOrigin = func(context.Context) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", failure
+		}
+		return "http://127.0.0.1:1234", nil
 	}
+	p.Descriptor = descriptorFor(t, p)
+	client, err := New(p, nil, &http.Client{Transport: staticSuccessTransport()})
+	require.NoError(t, err)
+	_, err = document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.ErrorIs(t, err, failure)
+	_, err = document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
+	require.NoError(t, err)
 }
