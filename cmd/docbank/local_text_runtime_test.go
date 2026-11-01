@@ -3,17 +3,29 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/openaicompat"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
+	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/embedlocal"
 )
 
@@ -71,63 +83,6 @@ func TestLocalTextApproval(t *testing.T) {
 	}
 }
 
-func TestLocalTextCandidatePreservesProvidersAndSelectsManagedModel(t *testing.T) {
-	t.Setenv("DOCBANK_TEST_VOYAGE_KEY", "synthetic-secret")
-	cfg, _ := embeddingGemma2Config(t, "http://127.0.0.1:11434", "DOCBANK_TEST_SWITCH_KEY")
-	render := newReportRenditionFixture(t)
-	cfg.RenditionProfiles = render.config.RenditionProfiles
-	cfg.RetrievalProfiles = render.config.RetrievalProfiles
-	cfg.ProcessingProfiles = render.config.ProcessingProfiles
-	p := cfg.ProcessingProfiles["archive"]
-	p.Embeddings = []string{"semantic"}
-	cfg.ProcessingProfiles["archive"] = p
-	before, err := cfg.ProcessingProfile("archive")
-	require.NoError(t, err)
-	candidate, managed, rebuild, err := localTextCandidate(cfg, "archive", "local")
-	require.NoError(t, err)
-	require.True(t, managed)
-	require.True(t, rebuild)
-	after, err := candidate.ProcessingProfile("archive")
-	require.NoError(t, err)
-	require.Equal(t, before.Document.Rendition, after.Document.Rendition, "PDF renderer and its disclosure survive the model switch")
-	require.Equal(t, before.Retrieval, after.Retrieval)
-	require.Equal(t, "semantic", after.Document.Embeddings[0].Name)
-	require.Equal(t, "nomic-embed-text", after.Document.Embeddings[0].Model)
-	require.Equal(t, "embeddinggemma2-text-f32-768-v1", before.Document.Embeddings[0].Model)
-	cfg, err = config.Default().WithLocalText()
-	require.NoError(t, err)
-	for _, managedBefore := range []bool{false, true} {
-		e := cfg.EmbeddingProfiles[config.LocalTextProfile]
-		e.Dimensions = 512
-		e.Runtime.Managed = managedBefore
-		cfg.EmbeddingProfiles[config.LocalTextProfile] = e
-		_, managed, rebuild, err = localTextCandidate(cfg, config.LocalTextProfile, "local")
-		require.NoError(t, err)
-		require.True(t, managed)
-		require.True(t, rebuild)
-	}
-	imageConfig, image, descriptor := voyageOriginalEmbeddingConfig(t)
-	mixed, err := imageConfig.WithLocalText()
-	require.NoError(t, err)
-	p = mixed.ProcessingProfiles[config.LocalTextProfile]
-	p.Embeddings = append(p.Embeddings, "voyage")
-	mixed.ProcessingProfiles[config.LocalTextProfile] = p
-	candidate, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
-	require.NoError(t, err)
-	require.True(t, managed)
-	require.False(t, rebuild)
-	require.Equal(t, image, candidate.EmbeddingProfiles["voyage"])
-	switched, err := configureEmbeddingRuntimeBundle(candidate, unavailableEmbeddingBlobs{}, t.TempDir())
-	require.NoError(t, err)
-	require.Contains(t, switched.registry.Fingerprints(), descriptor.Fingerprint)
-	p.Embeddings = []string{"voyage"}
-	mixed.ProcessingProfiles[config.LocalTextProfile] = p
-	_, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
-	require.False(t, managed)
-	require.False(t, rebuild)
-	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
-}
-
 func TestLocalTextSelectionFormat(t *testing.T) {
 	t.Parallel()
 	for _, data := range []string{`{"version":1`, `{"version":1,"profile":"archive","server":"invalid"}`, `{"profile":"archive","server":"local"}`, `{"version":2,"profile":"archive","server":"local"}`, `{"version":1,"profile":"archive","server":"local","typo":true}`} {
@@ -139,34 +94,10 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
+	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, "archive", choice.Profile)
-}
-
-func TestLocalTextDefaultSelectsNomic(t *testing.T) {
-	t.Parallel()
-	cfg, err := config.Default().WithLocalText()
-	require.NoError(t, err)
-	paid, _ := embeddingGemma2Config(t, "http://127.0.0.1:11434", "DOCBANK_TEST_DEFAULT_KEY")
-	cfg.EmbeddingProfiles["paid"] = paid.EmbeddingProfiles["semantic"]
-	cfg.CredentialBindings = paid.CredentialBindings
-	p := cfg.ProcessingProfiles[config.LocalTextProfile]
-	p.Embeddings = []string{"paid"}
-	cfg.ProcessingProfiles["aaa-paid"] = p
-	require.Equal(t, "local-text", defaultLocalTextProfile(cfg))
-	cfg.ProcessingProfiles["zzz-nomic"] = cfg.ProcessingProfiles[config.LocalTextProfile]
-	delete(cfg.ProcessingProfiles, config.LocalTextProfile)
-	require.Equal(t, "zzz-nomic", defaultLocalTextProfile(cfg))
-	delete(cfg.ProcessingProfiles, "zzz-nomic")
-	require.Equal(t, "local-text", defaultLocalTextProfile(cfg))
-	p.Embeddings = []string{config.LocalTextProfile}
-	cfg.ProcessingProfiles["zzz-nomic"] = p
-	missing := cfg.EmbeddingProfiles[config.LocalTextProfile]
-	missing.Runtime = nil
-	cfg.EmbeddingProfiles[config.LocalTextProfile] = missing
-	require.Equal(t, "local-text", defaultLocalTextProfile(cfg))
+	require.Equal(t, config.LocalTextProfile, choice.Profile)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
@@ -201,38 +132,124 @@ func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
 	}
 }
 
-func TestLocalTextNomicRevisionControlsReuseAndDefault(t *testing.T) {
-	t.Parallel()
-	for _, revision := range []string{"nomic-embed-text-v1", "nomic-embed-text-v1.5"} {
-		t.Run(revision, func(t *testing.T) {
-			cfg, err := config.Default().WithLocalText()
+func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
+	for _, result := range []struct {
+		name    string
+		invalid bool
+	}{{"completed", false}, {"invalid_response", true}} {
+		t.Run(result.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("DO_NOT_TRACK", "1")
+			t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+			root := t.TempDir()
+			t.Setenv("DOCBANK_HOME", root)
+			started, release := make(chan struct{}), make(chan struct{})
+			releaseRequest := sync.OnceFunc(func() { close(release) })
+			var once sync.Once
+			var calls atomic.Int64
+			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/embeddings" {
+					ping.ServeHTTP(w, r)
+					return
+				}
+				calls.Add(1)
+				once.Do(func() { close(started) })
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+				var body struct {
+					Input []string `json:"input"`
+				}
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+					return
+				}
+				data := make([]map[string]any, len(body.Input))
+				for i := range data {
+					vector := make([]float32, 768)
+					if result.invalid {
+						vector = []float32{1}
+					} else {
+						vector[0] = 1
+					}
+					data[i] = map[string]any{"index": i, "object": "embedding", "embedding": vector}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": data}))
+			}))
+			defer server.Close()
+			defer releaseRequest()
+			dir, err := embedlocal.DefaultDir()
 			require.NoError(t, err)
-			cfg.ProcessingProfiles["archive"] = cfg.ProcessingProfiles[config.LocalTextProfile]
-			delete(cfg.ProcessingProfiles, config.LocalTextProfile)
-			e := cfg.EmbeddingProfiles[config.LocalTextProfile]
-			e.Runtime.ModelRevision, e.Runtime.DeploymentEpoch = revision, revision
-			cfg.EmbeddingProfiles[config.LocalTextProfile] = e
-			candidate, managed, rebuild, err := localTextCandidate(cfg, "archive", "local")
+			endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
 			require.NoError(t, err)
-			require.True(t, managed)
-			require.Equal(t, revision != "nomic-embed-text-v1.5", rebuild)
-			require.Equal(t, "nomic-embed-text-v1.5", candidate.EmbeddingProfiles[config.LocalTextProfile].Runtime.ModelRevision)
-			var identities []string
-			for _, current := range []config.Config{cfg, candidate} {
-				profile, err := config.ManagedEmbeddingProfile(current.EmbeddingProfiles[config.LocalTextProfile], nil)
+			_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+			require.NoError(t, err)
+			layout := home.Layout{Root: root}
+			require.NoError(t, layout.Ensure())
+			var profileFingerprint, version string
+			func() {
+				catalog, err := store.Open(layout.DBPath())
 				require.NoError(t, err)
-				provider, err := openaicompat.New(profile, nil, &http.Client{})
+				defer func() { require.NoError(t, catalog.Close()) }()
+				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 				require.NoError(t, err)
-				identity, err := provider.VectorIdentity()
+				defer func() { require.NoError(t, blobs.Close()) }()
+				cfg, err := localTextCandidate(config.Default(), "local")
 				require.NoError(t, err)
-				identities = append(identities, identity)
+				bundle, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
+				require.NoError(t, err)
+				profiles, err := executableProcessingProfiles(cfg, bundle)
+				require.NoError(t, err)
+				service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
+				require.NoError(t, err)
+				defer service.Stop()
+				written, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader("synthetic local text"))
+				require.NoError(t, err)
+				encoding, err := written.EncodingName()
+				require.NoError(t, err)
+				node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "document.txt", written.Hash, written.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+				require.NoError(t, err)
+				selector := processing.Selector{Profile: config.LocalTextProfile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+				plan, err := service.Plan(t.Context(), selector)
+				require.NoError(t, err)
+				_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+				profileFingerprint, version = plan.ProfileFingerprint, node.CurrentVersionID
+			}()
+			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
+			stop := startServe(t)
+			defer stop()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("embedding request never started")
 			}
-			require.Equal(t, !rebuild, identities[0] == identities[1])
-			if rebuild {
-				require.Equal(t, "local-text", defaultLocalTextProfile(cfg))
+			time.Sleep(time.Second) //nolint:kennlint // sleeptest: the real daemon idle ticker and loopback listener use wall time
+			_, _, found, err := daemonconn.Find(t.Context(), root)
+			require.NoError(t, err)
+			require.True(t, found, "the daemon remains discoverable during an embedding request")
+			releaseRequest()
+			require.Eventually(t, func() bool {
+				records, err := daemonconn.RuntimeStore(root).List()
+				return err == nil && len(records) == 0
+			}, 8*time.Second, 20*time.Millisecond)
+			stop()
+			catalog, err := store.Open(layout.DBPath())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			jobs, err := catalog.EmbeddingJobsForVersionProfile(t.Context(), version, profileFingerprint)
+			require.NoError(t, err)
+			require.Len(t, jobs, 1)
+			if result.invalid {
+				require.Equal(t, store.EmbeddingFailureInvalidResponse, jobs[0].FailureCode)
 			} else {
-				require.Equal(t, "archive", defaultLocalTextProfile(cfg))
+				require.Equal(t, "completed", jobs[0].State)
 			}
+			require.Equal(t, int64(1), calls.Load())
 		})
 	}
 }

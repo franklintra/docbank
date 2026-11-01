@@ -242,15 +242,6 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 
 func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *testing.T) {
 	t.Setenv("DOCBANK_TEST_VOYAGE_KEY", "synthetic-secret")
-	cfg, _, final := voyageOriginalEmbeddingConfig(t)
-
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
-	require.NoError(t, err)
-	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
-}
-
-func voyageOriginalEmbeddingConfig(t *testing.T) (config.Config, config.EmbeddingProfileConfig, document.EmbeddingDescriptor) {
-	t.Helper()
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: voyage.DefaultModel, Dimension: voyage.DefaultDimension,
 		Media: media.Policy{MaxBytes: 1 << 20, AllowStill: true, AllowVideo: true}, MaxBatchItems: 8,
 		MaxRequestBytes: 1 << 20, MaxResponseBytes: 1 << 20})
@@ -297,7 +288,9 @@ func voyageOriginalEmbeddingConfig(t *testing.T) (config.Config, config.Embeddin
 	cfg.EmbeddingProfiles["voyage"] = profile
 	require.NoError(t, cfg.Validate())
 
-	return cfg, profile, final
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {

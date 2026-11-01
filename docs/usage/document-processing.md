@@ -25,19 +25,11 @@ docbank processing profiles
 docbank processing local --server local
 ```
 
-The command reviews the profile, model, server, vector-space effect, and missing download size before one confirmation. A fresh installation uses the built-in `local-text` profile with `nomic-embed-text` and the existing plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
+The command previews the built-in `local-text` profile, model, server, and missing download size before one confirmation. It builds a separate `local-text` index with Nomic v1.5 (`nomic-embed-text`) and the plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
 
-Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background, reuses matching vectors, and resumes after a daemon restart. Revoking processing consent stops provider calls.
+Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
 
-Choose `--server auto` to keep a configured endpoint or prefer a running Ollama before the shared server. Choose `--server local` to use the shared `kennembed` server even when Ollama or a configured endpoint is present. Downloads use Kit's shared installation and require approval before network access. An already installed server still requires approval, with a zero-byte download shown.
-
-To switch an existing profile:
-
-```bash
-docbank processing local --profile archive --server local
-```
-
-Without `--profile`, setup chooses a configured Nomic text profile, or the built-in `local-text` profile. A Nomic profile keeps its recipe and vector space. Use `nomic-embed-text` for Nomic v1.5. Kit also serves `:latest` and `:v1.5`, but Docbank's portable model format rejects tagged names. Existing inputs reuse their vectors, and new inputs are embedded. For another model, the preview shows the Nomic text recipe and warns that the new vector space requires a rebuilt index. The approved profile name continues to select the chosen server for search. The daemon's changing loopback port doesn't change consent; changing the service, model, recipe, or server mode needs another approval.
+Choose `--server auto` to prefer a running Ollama before the shared server. Choose `--server local` to use the shared `kennembed` server. Downloads use Kit's shared installation and require approval before network access. An already installed server still requires approval, with a zero-byte download shown. The daemon's changing loopback port keeps the same consent grant.
 
 Declining, cancellation before apply, and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server after approval; API apply requires a ready server. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. Setup restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
 

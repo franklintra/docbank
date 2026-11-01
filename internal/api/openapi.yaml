@@ -8309,17 +8309,12 @@ components:
         plan_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
-        profile:
-          maxLength: 128
-          minLength: 1
-          type: string
         server:
           enum:
             - auto
             - local
           type: string
       required:
-        - profile
         - server
         - plan_fingerprint
         - consent
@@ -8392,9 +8387,6 @@ components:
             - https://example.com/schemas/LocalTextPlanRequest.json
           format: uri
           readOnly: true
-          type: string
-        profile:
-          maxLength: 128
           type: string
         server:
           enum:

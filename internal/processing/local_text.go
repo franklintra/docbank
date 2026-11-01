@@ -11,20 +11,14 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const localTextSkipLimit = 262_144
 
 type localTextSkipKey struct{ version, name string }
-type localTextSkip struct {
-	seen             bool
-	passwordRequired bool
-	passwordHash     [sha256.Size]byte
-}
-
-var ErrLocalTextConfiguration = errors.New("unsupported local text configuration")
+type localTextSkip struct{ seen bool }
 
 type LocalTextPlan struct {
 	Fingerprint        string    `json:"fingerprint"`
@@ -43,24 +37,23 @@ type LocalTextPlan struct {
 // LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
-	Service        *Service
-	Candidate      func(string, string) (*Service, bool, bool, error)
-	DefaultProfile string
-	Selected       string
-	Startup        func(context.Context, bool, string) error
-	Save           func(string, string) error
-	mu             sync.Mutex
+	Service       *Service
+	Candidate     func(string) (*Service, error)
+	Selected      string
+	Startup       func(context.Context, bool, string) error
+	Save          func(string, string) error
+	ActivityBegin func()
+	ActivityEnd   func()
+	mu            sync.Mutex
 	// The backfill lane owns these across its sequential list/process pages.
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
 	logger     *slog.Logger
 }
 
-func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (LocalTextPlan, *Service, error) {
-	if name == "" {
-		name = setup.DefaultProfile
-	}
-	service, managed, rebuild, err := setup.Candidate(name, mode)
+func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
+	name := config.LocalTextProfile
+	service, err := setup.Candidate(mode)
 	if err != nil {
 		return LocalTextPlan{}, nil, err
 	}
@@ -79,11 +72,8 @@ func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (Loc
 		return LocalTextPlan{}, nil, err
 	}
 	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: mode, ProfileFingerprint: profile.record.Fingerprint,
-		Managed: managed, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
-		VectorEffect: "reuse matching vectors; embed missing inputs"}
-	if rebuild {
-		plan.VectorEffect = "switching to Kit-managed Nomic v1.5 uses a new vector space and rebuilds the index"
-	}
+		Managed: true, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
+		VectorEffect: "builds the separate local-text index; embeds inputs it is missing"}
 	for _, binding := range profile.portable.Embeddings {
 		plan.Models = append(plan.Models, binding.Model)
 	}
@@ -96,18 +86,18 @@ func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (Loc
 	return plan, service, nil
 }
 
-func (setup *LocalTextSetup) Plan(ctx context.Context, name, mode string) (LocalTextPlan, error) {
-	plan, service, err := setup.review(ctx, name, mode)
+func (setup *LocalTextSetup) Plan(ctx context.Context, mode string) (LocalTextPlan, error) {
+	plan, service, err := setup.review(ctx, mode)
 	if service != nil {
 		service.Stop()
 	}
 	return plan, err
 }
 
-func (setup *LocalTextSetup) Apply(ctx context.Context, name, mode, fingerprint string) (LocalTextPlan, error) {
+func (setup *LocalTextSetup) Apply(ctx context.Context, mode, fingerprint string) (LocalTextPlan, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
-	plan, service, err := setup.review(ctx, name, mode)
+	plan, service, err := setup.review(ctx, mode)
 	if err != nil {
 		return LocalTextPlan{}, err
 	}
@@ -144,8 +134,6 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 		}
 	}
 	var result []store.DocumentSummary
-	var passwordHash [sha256.Size]byte
-	var passwordsChecked, passwordsValid bool
 	for len(result) < limit {
 		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), 1000)
 		if err != nil {
@@ -154,15 +142,8 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 		for _, item := range items {
 			key := localTextSkipKey{item.ContentVersionID, item.Name}
 			if skip, ok := setup.skips[key]; ok {
-				if skip.passwordRequired && !passwordsChecked {
-					passwordHash, passwordsValid = localTextPasswordHash(profile)
-					passwordsChecked = true
-				}
-				if !skip.passwordRequired || (passwordsValid && skip.passwordHash == passwordHash) {
-					skip.seen = true
-					continue
-				}
-				delete(setup.skips, key)
+				skip.seen = true
+				continue
 			}
 			result = append(result, item)
 			if len(result) == limit {
@@ -195,33 +176,17 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 	}
 	if plan.RenditionIneligibleReason != "" {
 		if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
-			passwordRequired := plan.RenditionIneligibleReason == string(media.CapabilityReasonPDFPasswordRequired)
-			var passwordHash [sha256.Size]byte
-			var passwordsValid bool
-			if passwordRequired {
-				passwordHash, passwordsValid = localTextPasswordHash(profile)
-			}
-			if !passwordRequired || passwordsValid {
-				if setup.skips == nil {
-					setup.skips = make(map[localTextSkipKey]*localTextSkip)
-				}
-				if len(setup.skips) < localTextSkipLimit {
-					setup.skips[localTextSkipKey{item.ContentVersionID, item.Name}] = &localTextSkip{seen: true, passwordRequired: passwordRequired, passwordHash: passwordHash}
-				} else if !setup.skipWarned {
-					logger := setup.logger
-					if logger == nil {
-						logger = slog.Default()
-					}
-					logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
-					setup.skipWarned = true
-				}
-			}
+			setup.skip(item, "")
 		}
 		return nil
 	}
 	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
 		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
-	if errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrPlanChanged) {
+	if errors.Is(err, ErrRenditionFailed) {
+		setup.skip(item, "rendition_failed")
+		return nil
+	}
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrPlanChanged) {
 		return nil
 	}
 	if err != nil {
@@ -233,30 +198,64 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 			return statusErr
 		}
 		if status.State == "failed" {
-			err = errors.Join(err, fmt.Errorf("local text embedding job %s failed: %s", id, status.FailureCode))
+			switch status.FailureCode {
+			case store.EmbeddingFailureInvalidResponse, store.EmbeddingFailureInputRejected, store.EmbeddingFailureStaleAuthority:
+				setup.skip(item, string(status.FailureCode))
+			default:
+				err = errors.Join(err, fmt.Errorf("local text embedding job %s failed: %s", id, status.FailureCode))
+			}
 		}
 	}
 	return err
 }
 
-func localTextPasswordHash(profile configuredProfile) ([sha256.Size]byte, bool) {
-	provider, ok := profile.provider.(interface {
-		PDFPasswords() ([]string, bool, error)
-	})
-	if !ok {
-		return [sha256.Size]byte{}, false
+func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
+	logger := setup.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	passwords, supported, err := provider.PDFPasswords()
-	if err != nil || !supported {
-		return [sha256.Size]byte{}, false
+	if setup.skips == nil {
+		setup.skips = make(map[localTextSkipKey]*localTextSkip)
 	}
-	encoded, err := json.Marshal(passwords)
-	return sha256.Sum256(encoded), err == nil
+	key := localTextSkipKey{item.ContentVersionID, item.Name}
+	if _, exists := setup.skips[key]; exists {
+		return
+	}
+	if len(setup.skips) < localTextSkipLimit {
+		setup.skips[key] = &localTextSkip{seen: true}
+		if code != "" {
+			logger.Warn("local text document skipped", "version", item.ContentVersionID, "code", code)
+		}
+	} else if !setup.skipWarned {
+		logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
+		setup.skipWarned = true
+	}
 }
 
 func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) error {
 	setup.logger = logger
+	holding := false
+	release := func() {
+		if holding {
+			holding = false
+			if setup.ActivityEnd != nil {
+				setup.ActivityEnd()
+			}
+		}
+	}
+	defer release()
 	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
-		List: setup.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: setup.process}
+		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
+			items, err := setup.targets(ctx, after, limit)
+			if len(items) > 0 && !holding {
+				holding = true
+				if setup.ActivityBegin != nil {
+					setup.ActivityBegin()
+				}
+			} else if err == nil && after == "" && len(items) == 0 {
+				release()
+			}
+			return items, err
+		}, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: setup.process}
 	return lane.Run(ctx)
 }

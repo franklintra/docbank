@@ -314,20 +314,20 @@ func runServe(ctx context.Context) (retErr error) {
 		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
-	candidateProfiles := func(name, mode string) (map[string]processing.ProfileConfig, config.Config, bool, bool, error) {
-		candidate, managed, rebuild, err := localTextCandidate(baseConfig, name, mode)
+	candidateProfiles := func(mode string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode)
 		if err != nil {
-			return nil, candidate, false, false, err
+			return nil, candidate, err
 		}
 		bundle, err := configureEmbeddingRuntimeBundle(candidate, blobs, layout.BlobTmpDir())
 		if err != nil {
-			return nil, candidate, false, false, err
+			return nil, candidate, err
 		}
 		profiles, err := executableProcessingProfiles(candidate, bundle)
-		return profiles, candidate, managed, rebuild, err
+		return profiles, candidate, err
 	}
 	if choice.Profile != "" {
-		selected, candidate, _, _, err := candidateProfiles(choice.Profile, choice.Server)
+		selected, candidate, err := candidateProfiles(choice.Server)
 		if err == nil {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
@@ -380,20 +380,22 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
 
-	localText := &processing.LocalTextSetup{Service: processingService, DefaultProfile: defaultLocalTextProfile(baseConfig), Selected: choice.Profile,
+	tracker := api.NewActivityTracker()
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
+		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
 		Save: func(name, mode string) error {
 			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
 		},
 	}
-	localText.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
-		profiles, _, managed, rebuild, err := candidateProfiles(name, mode)
+	localText.Candidate = func(mode string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode)
 		if err != nil {
-			return nil, false, false, err
+			return nil, err
 		}
 		service, err := processing.NewService(processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
 			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
-		return service, managed, rebuild, err
+		return service, err
 	}
 	if choice.Profile != "" {
 		if err := jobSupervisor.Start("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
@@ -651,7 +653,6 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
-	tracker := api.NewActivityTracker()
 	backupScheduleWake := make(chan struct{}, 1)
 	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker, BackupScheduleWake: backupScheduleWake}); err != nil {
 		return fmt.Errorf("starting scheduled backups: %w", err)

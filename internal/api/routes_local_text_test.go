@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
 )
@@ -18,12 +19,14 @@ import (
 func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	t.Parallel()
 	var saves, starts atomic.Int64
-	var startupFailure, saveFailure, unsupported atomic.Bool
+	var startupFailure, saveFailure atomic.Bool
 	startupFailure.Store(true)
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
-		configure := configureProcessingTestServiceWithEmbeddingProvider(t, newProcessingTestEmbeddingProvider(t), true)
+		renderer, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+		require.NoError(t, err)
+		configure := configureProcessingTestServiceWithProviders(t, renderer, newProcessingTestEmbeddingProvider(t), true, document.EmbeddingOptional, "local-text")
 		configure(deps)
-		setup := &processing.LocalTextSetup{Service: deps.Processing, DefaultProfile: "private",
+		setup := &processing.LocalTextSetup{Service: deps.Processing,
 			Startup: func(context.Context, bool, string) error {
 				starts.Add(1)
 				if startupFailure.Load() {
@@ -32,7 +35,7 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 				return nil
 			},
 			Save: func(name, mode string) error {
-				assert.Equal(t, "private", name)
+				assert.Equal(t, "local-text", name)
 				assert.Equal(t, "local", mode)
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")
@@ -41,15 +44,11 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 				return nil
 			},
 		}
-		setup.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
-			assert.Equal(t, "private", name)
+		setup.Candidate = func(mode string) (*processing.Service, error) {
 			assert.Equal(t, "local", mode)
-			if unsupported.Load() {
-				return nil, false, false, fmt.Errorf("%w: choose --profile local-text or configure 768 dimensions", processing.ErrLocalTextConfiguration)
-			}
 			candidate := *deps
 			configure(&candidate)
-			return candidate.Processing, false, false, nil
+			return candidate.Processing, nil
 		}
 		deps.LocalText = setup
 	})
@@ -59,11 +58,12 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	var plan api.LocalTextPlan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
 	require.Equal(t, "this vault and new imports", plan.Scope)
+	require.Equal(t, "builds the separate local-text index; embeds inputs it is missing", plan.VectorEffect)
 	require.Len(t, plan.Flow, 3)
 	require.Equal(t, "query_embedding", plan.Flow[2].Capability)
 	require.Zero(t, starts.Load())
 	require.Zero(t, saves.Load())
-	request := api.LocalTextApplyRequest{Profile: plan.Profile, Server: plan.Server, PlanFingerprint: plan.Fingerprint}
+	request := api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusPreconditionRequired, response.StatusCode, body)
 	require.Zero(t, starts.Load())
@@ -85,8 +85,4 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Equal(t, int64(1), saves.Load())
-	unsupported.Store(true)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local"})
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, "configure 768 dimensions")
 }

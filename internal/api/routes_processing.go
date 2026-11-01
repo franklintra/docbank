@@ -793,9 +793,6 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 }
 
 func fromProcessingError(err error) error {
-	if errors.Is(err, processing.ErrLocalTextConfiguration) {
-		return NewError(http.StatusUnprocessableEntity, "unsupported_local_text_configuration", err.Error())
-	}
 	detailPrefix := ""
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "

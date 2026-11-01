@@ -17,9 +17,9 @@ import (
 )
 
 func newProcessingLocalCommand() *cobra.Command {
-	var profile, server string
+	var server string
 	cmd := &cobra.Command{Use: "local", Short: "Set up vault-wide text indexing", Args: cobra.NoArgs,
-		Example: "  docbank processing local --server local\n  docbank processing local --profile archive --server local",
+		Example: "  docbank processing local --server local",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server != "auto" && server != "local" {
 				return usageError(errors.New("--server must be auto or local"))
@@ -30,7 +30,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			closeClient := sync.OnceValue(c.Close)
 			defer func() { _ = closeClient() }()
-			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Profile: profile, Server: server}})
+			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: server}})
 			if err != nil {
 				return err
 			}
@@ -41,7 +41,7 @@ func newProcessingLocalCommand() *cobra.Command {
 				return err
 			}
 			_, err = c.API().ApplyLocalText(cmd.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{
-				Profile: plan.Profile, Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true,
+				Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true,
 			}})
 			if err != nil {
 				return err
@@ -67,7 +67,6 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			return nil
 		}}
-	cmd.Flags().StringVar(&profile, "profile", "", "processing profile")
 	cmd.Flags().StringVar(&server, "server", "auto", "embedding server: auto or local")
 	return cmd
 }

@@ -3751,11 +3751,6 @@ export interface LocalTextApplyRequest {
   consent: boolean;
   /** @pattern ^[0-9a-f]{64}$ */
   plan_fingerprint: string;
-  /**
-     * @minLength 1
-     * @maxLength 128
-     */
-  profile: string;
   server: LocalTextApplyRequestServer;
 }
 
@@ -3829,8 +3824,6 @@ export const LocalTextPlanRequestServer = {
 export interface LocalTextPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxLength 128 */
-  profile?: string;
   server: LocalTextPlanRequestServer;
 }
 

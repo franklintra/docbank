@@ -807,20 +807,22 @@ func TestSharedAdmissionRejectsBeforeTransport(t *testing.T) {
 
 func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int64
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		assert.Equal(t, "/v1/embeddings", r.URL.Path)
-		assert.Empty(t, r.Header.Get("Authorization"))
-		var body capturedRequest
-		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-		assert.Equal(t, []string{"search_document: passage", "search_query: question"}, body.Input)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(successIndexedResponse)
-	})
-	first := httptest.NewServer(handler)
+	var firstCalls, secondCalls atomic.Int64
+	handler := func(calls *atomic.Int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			assert.Equal(t, "/v1/embeddings", r.URL.Path)
+			assert.Empty(t, r.Header.Get("Authorization"))
+			var body capturedRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			assert.Equal(t, []string{"search_document: passage", "search_query: question"}, body.Input)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(successIndexedResponse)
+		})
+	}
+	first := httptest.NewServer(handler(&firstCalls))
 	defer first.Close()
-	second := httptest.NewServer(handler)
+	second := httptest.NewServer(handler(&secondCalls))
 	defer second.Close()
 	origin := first.URL
 	p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
@@ -839,7 +841,8 @@ func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
 		_, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
 		require.NoError(t, err)
 	}
-	require.Equal(t, int64(2), calls.Load())
+	require.Equal(t, int64(1), firstCalls.Load())
+	require.Equal(t, int64(1), secondCalls.Load())
 	identity, err := client.VectorIdentity()
 	require.NoError(t, err)
 	assert.Equal(t, oldIdentity, identity)

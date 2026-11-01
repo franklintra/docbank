@@ -1400,9 +1400,13 @@ func configureProcessingTestServiceWithEmbeddingProvider(t *testing.T,
 }
 
 func configureProcessingTestServiceWithProviders(t *testing.T, rendition document.RenditionProvider,
-	embedding document.EmbeddingProvider, withRendition bool, activation document.EmbeddingActivation,
+	embedding document.EmbeddingProvider, withRendition bool, activation document.EmbeddingActivation, names ...string,
 ) func(*api.Deps) {
 	t.Helper()
+	name := "private"
+	if len(names) > 0 {
+		name = names[0]
+	}
 	return func(deps *api.Deps) {
 		profile := processingTestProfile(rendition.Descriptor())
 		var renditionProvider = rendition
@@ -1428,7 +1432,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 		service, err := processing.NewService(processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
-			Profiles: map[string]processing.ProfileConfig{"private": {
+			Profiles: map[string]processing.ProfileConfig{name: {
 				Profile: profile, RenditionProvider: renditionProvider,
 				EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": embedding},
 			}},

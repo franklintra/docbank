@@ -9,12 +9,10 @@ import (
 )
 
 type LocalTextPlanRequest struct {
-	Profile string `json:"profile,omitzero" maxLength:"128"`
-	Server  string `json:"server" enum:"auto,local"`
+	Server string `json:"server" enum:"auto,local"`
 }
 
 type LocalTextApplyRequest struct {
-	Profile         string `json:"profile" minLength:"1" maxLength:"128"`
 	Server          string `json:"server" enum:"auto,local"`
 	PlanFingerprint string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
 	Consent         bool   `json:"consent"`
@@ -49,7 +47,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if d.LocalText == nil {
 				return nil, processingUnavailable()
 			}
-			plan, err := d.LocalText.Plan(ctx, input.Body.Profile, input.Body.Server)
+			plan, err := d.LocalText.Plan(ctx, input.Body.Server)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
@@ -65,7 +63,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if !input.Body.Consent {
 				return nil, fromProcessingError(processing.ErrConsentRequired)
 			}
-			plan, err := d.LocalText.Apply(ctx, input.Body.Profile, input.Body.Server, input.Body.PlanFingerprint)
+			plan, err := d.LocalText.Apply(ctx, input.Body.Server, input.Body.PlanFingerprint)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}

@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,7 +31,7 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
 	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
 	config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
-		Profiles: map[string]ProfileConfig{"text": {Profile: portable, RenditionProvider: renderer,
+		Profiles: map[string]ProfileConfig{"local-text": {Profile: portable, RenditionProvider: renderer,
 			RerankingProvider:   consumerReranker{source: &consumerSource{}},
 			RerankingProfile:    retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 2, MaxExcerptBytes: 4096},
 			RerankingDeadline:   time.Second,
@@ -42,36 +40,36 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	service, err := NewService(config)
 	require.NoError(t, err)
 	defer service.Stop()
-	setup := &LocalTextSetup{Service: service, Selected: "text", DefaultProfile: "text"}
+	setup := &LocalTextSetup{Service: service, Selected: "local-text"}
 	gateFailure := errors.New("synthetic grant failure")
 	saveFailure := errors.New("synthetic save failure")
-	setup.Candidate = func(string, string) (*Service, bool, bool, error) {
+	setup.Candidate = func(string) (*Service, error) {
 		next := config
 		next.Gate = &localTextGrantGate{workerTestGate: newWorkerTestGate(), err: gateFailure}
 		s, err := NewService(next)
-		return s, false, false, err
+		return s, err
 	}
 	setup.Startup = func(context.Context, bool, string) error { return nil }
 	saved := "previous-profile"
 	setup.Save = func(name, _ string) error { saved = name; return nil }
 	// Preview and apply review the operation without reopening originals.
-	plan, err := setup.Plan(t.Context(), "text", "local")
+	plan, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Len(t, plan.Flow, 2)
 	require.Equal(t, "reranking", plan.Flow[1].Capability)
-	_, err = setup.Apply(t.Context(), "text", "local", plan.Fingerprint)
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, gateFailure)
 	require.Equal(t, "previous-profile", saved)
-	setup.Candidate = func(string, string) (*Service, bool, bool, error) {
+	setup.Candidate = func(string) (*Service, error) {
 		s, err := NewService(config)
-		return s, false, false, err
+		return s, err
 	}
 	setup.Save = func(string, string) error { return saveFailure }
-	_, err = setup.Apply(t.Context(), "text", "local", plan.Fingerprint)
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, ErrConsentSaved)
 	require.ErrorIs(t, err, saveFailure)
 	require.Equal(t, "previous-profile", saved)
-	for _, request := range service.profileConsentRequests(service.profiles["text"]) {
+	for _, request := range service.profileConsentRequests(service.profiles["local-text"]) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
@@ -84,38 +82,6 @@ type localTextGrantGate struct {
 }
 
 func (gate *localTextGrantGate) MutateContext(context.Context, func() error) error { return gate.err }
-
-func TestLocalTextRetriesAfterPDFPasswordBecomesAvailable(t *testing.T) {
-	t.Parallel()
-	renderer := newWorkerProvider(t)
-	provider := &passwordCountingProvider{RenditionProvider: renderer, supported: true}
-	fixture, setup := newLocalTextBackfillFixture(t, provider)
-	targets, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	require.NoError(t, setup.process(t.Context(), targets[0]))
-	require.Zero(t, provider.calls, "ordinary ineligibility does not read the password list")
-	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128)
-	require.NoError(t, err)
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(encrypted))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "locked.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}
-	require.NoError(t, setup.process(t.Context(), item))
-	require.Zero(t, renderer.calls)
-	targets, err = setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	for _, target := range targets {
-		require.NotEqual(t, item.ContentVersionID, target.ContentVersionID)
-	}
-	provider.passwords = []string{"open"}
-	targets, err = setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Contains(t, targets, item)
-	require.NoError(t, setup.process(t.Context(), item))
-	require.Equal(t, 1, renderer.calls, "the same version must be reconsidered after the password source changes")
-}
 
 func TestLocalTextReconsidersRenamedPDF(t *testing.T) {
 	t.Parallel()
@@ -288,34 +254,71 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
-func TestLocalTextBackfillReportsPermanentFailure(t *testing.T) {
+func TestLocalTextPermanentFailureLeavesSweep(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int64
-	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), values: []float32{1}, embed: func(context.Context) error {
-		calls.Add(1)
-		return nil
-	}}
-	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "invalid-response.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	logs, err := os.CreateTemp(t.TempDir(), "local-text.log")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, logs.Close()) }()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	done := make(chan error, 1)
-	go func() { done <- setup.Backfill(ctx, slog.New(slog.NewTextHandler(logs, nil))) }()
-	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(logs.Name())
-		return err == nil && strings.Contains(string(data), string(store.EmbeddingFailureInvalidResponse))
-	}, 5*time.Second, 10*time.Millisecond, "the local-text lane reports terminal job failures to Backfill")
-	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, setup.Service.profiles["pdf"].record.Fingerprint)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	require.Equal(t, store.EmbeddingFailureInvalidResponse, jobs[0].FailureCode)
-	require.Equal(t, int64(1), calls.Load())
+	for _, failure := range []string{"invalid_response", "rendition_failed", "stale_authority"} {
+		t.Run(failure, func(t *testing.T) {
+			renderer := newWorkerProvider(t)
+			data, name, mime := mediatest.PDF(), "failed.pdf", "application/pdf"
+			if failure == "rendition_failed" {
+				renderer.renderErr = workerProviderError(t, document.RenditionErrorUnsupportedInput)
+			}
+			var calls int
+			provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), values: []float32{1}, embed: func(context.Context) error { calls++; return nil }}
+			fixture, setup := newLocalTextBackfillFixture(t, renderer, provider)
+			initial, err := setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			for _, item := range initial {
+				require.NoError(t, setup.process(t.Context(), item))
+			}
+			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+			require.NoError(t, err)
+			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), name, written.Hash, written.Size, mime, processingBlobPhysical(t, written))
+			require.NoError(t, err)
+			item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: name}
+			if failure == "stale_authority" {
+				profile := setup.Service.profiles[setup.Selected]
+				version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+				require.NoError(t, err)
+				_, err = setup.Service.runRendition(t.Context(), node, version, setup.Selected, profile, setup.Service.principal, setup.Service.scope, nil)
+				require.NoError(t, err)
+				binding := profile.portable.Embeddings[0]
+				generation, err := setup.Service.chunkEmbeddingGeneration(t.Context(), version, profile, binding)
+				require.NoError(t, err)
+				job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), store.EmbeddingJobRequest{ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name, VectorSpaceID: profile.vectorSpaces[binding.Name], Descriptor: provider.Descriptor(), InputGeneration: generation,
+					Authorization: store.ProviderOperationAuthorizationRequest{Principal: setup.Service.principal, Scope: setup.Service.scope, ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}})
+				require.NoError(t, err)
+				at := time.Now().UTC()
+				claim, work, found, err := fixture.catalog.ClaimEmbeddingWork(t.Context(), job.ID, "stale-test", at, time.Minute, []string{provider.Descriptor().Fingerprint})
+				require.NoError(t, err)
+				require.True(t, found)
+				require.NoError(t, fixture.catalog.FailEmbeddingWork(t.Context(), claim, work, store.EmbeddingFailureStaleAuthority, store.EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			}
+			var logs bytes.Buffer
+			setup.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			require.NoError(t, setup.process(t.Context(), item))
+			logged := logs.String()
+			require.Contains(t, logged, failure)
+			targets, err := setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			require.Empty(t, targets)
+			targets, err = setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			require.Empty(t, targets)
+			require.Equal(t, logged, logs.String())
+			require.Equal(t, 1, renderer.calls)
+			if failure == "invalid_response" {
+				require.Equal(t, 1, calls)
+			}
+			replacement, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(append(data, '\n')))
+			require.NoError(t, err)
+			changed, _, err := fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, replacement.Hash, replacement.Size, mime, processingBlobPhysical(t, replacement))
+			require.NoError(t, err)
+			targets, err = setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			require.Equal(t, []store.DocumentSummary{{NodeID: changed.ID, ContentVersionID: changed.CurrentVersionID, Name: name}}, targets)
+		})
+	}
 }
 
 func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {

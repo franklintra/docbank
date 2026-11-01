@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -26,7 +25,7 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		if err == nil && choice.Version != 1 {
 			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
 		}
-		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local")) {
+		if err == nil && (choice.Profile != config.LocalTextProfile || (choice.Server != "auto" && choice.Server != "local")) {
 			err = errors.New("local-text selection requires a profile and auto or local server")
 		}
 	}
@@ -42,92 +41,26 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-// Only this isolated view rewrites embedding definitions. Its sole processing
-// profile keeps its public name and binding names, including shared bindings.
-func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bool, bool, error) {
+// The built-in profile has its own index and leaves configured providers intact.
+func localTextCandidate(cfg config.Config, mode string) (config.Config, error) {
 	if mode != "auto" && mode != "local" {
-		return cfg, false, false, processing.ErrProfileNotConfigured
+		return cfg, processing.ErrProfileNotConfigured
 	}
 	cfg.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
 	cfg.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
 	cfg.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
 	cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
-	if name == config.LocalTextProfile {
-		if _, exists := cfg.ProcessingProfiles[name]; !exists {
-			var err error
-			cfg, err = cfg.WithLocalText()
-			if err != nil {
-				return cfg, false, false, err
-			}
-		}
-	}
-	profile, ok := cfg.ProcessingProfiles[name]
-	if !ok || len(profile.Embeddings) == 0 {
-		return cfg, false, false, processing.ErrProfileNotConfigured
-	}
-	fallback, err := config.Default().WithLocalText()
+	var err error
+	cfg, err = cfg.WithLocalText()
 	if err != nil {
-		return cfg, false, false, err
+		return cfg, err
 	}
-	managed, rebuild := false, false
-	textBindings := 0
-	for _, binding := range profile.Embeddings {
-		original, exists := cfg.EmbeddingProfiles[binding]
-		if !exists || original.Embedder != nil {
-			original, err = cfg.EmbeddingProfile(binding)
-			if err != nil {
-				return cfg, false, false, err
-			}
-		}
-		if original.InputKind != "rendition_chunk" {
-			continue
-		}
-		textBindings++
-		if original.Runtime == nil {
-			return cfg, false, false, processing.ErrProfileNotConfigured
-		}
-		if mode == "auto" && original.Runtime.Endpoint != "" {
-			continue
-		}
-		next := original
-		builtin := fallback.EmbeddingProfiles[config.LocalTextProfile]
-		if original.Model != builtin.Model || original.Dimensions != builtin.Dimensions || original.Runtime.ModelRevision != builtin.Runtime.ModelRevision {
-			next = builtin
-			next.Activation = original.Activation
-			rebuild = true
-		}
-		if next.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" {
-			return cfg, false, false, fmt.Errorf("%w: profile %q requires an OpenAI-compatible Nomic runtime; choose --profile local-text", processing.ErrLocalTextConfiguration, name)
-		}
-		next.Runtime = new(*next.Runtime)
-		next.Runtime.Managed, next.Runtime.ServerMode = true, mode
-		next.Runtime.ProviderEgressConfig = config.ProviderEgressConfig{}
-		next.Runtime.ProviderRevisionHeader = ""
-		next.Runtime.DeploymentEpoch = next.Runtime.ModelRevision
-		next.Embedder = nil
-		cfg.EmbeddingProfiles[binding] = next
-		managed = true
-	}
-	if textBindings == 0 {
-		return cfg, false, false, processing.ErrProfileNotConfigured
-	}
-	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: profile}
-	return cfg, managed, rebuild, nil
-}
-
-func defaultLocalTextProfile(cfg config.Config) string {
-	for _, name := range slices.Sorted(maps.Keys(cfg.ProcessingProfiles)) {
-		p := cfg.ProcessingProfiles[name]
-		for _, binding := range p.Embeddings {
-			e, err := cfg.EmbeddingProfile(binding)
-			if err == nil && e.Runtime != nil && e.InputKind == "rendition_chunk" && e.Model == "nomic-embed-text" && e.Dimensions == 768 {
-				if _, _, rebuild, err := localTextCandidate(cfg, name, "local"); err == nil && !rebuild {
-					return name
-				}
-			}
-		}
-	}
-	return config.LocalTextProfile
+	profile := cfg.EmbeddingProfiles[config.LocalTextProfile]
+	profile.Runtime = new(*profile.Runtime)
+	profile.Runtime.ServerMode = mode
+	cfg.EmbeddingProfiles[config.LocalTextProfile] = profile
+	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles[config.LocalTextProfile]}
+	return cfg, nil
 }
 
 func localTextStartup(ctx context.Context, managed bool, mode string) error {
