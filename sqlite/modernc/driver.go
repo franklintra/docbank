@@ -13,7 +13,6 @@ import (
 
 	modernsqlite "modernc.org/sqlite"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -66,10 +65,7 @@ func init() {
 			}
 			contract, _ := args[1].(string)
 			checksum, _ := args[2].(string)
-			if _, err := document.DecodeSourceMetadataGenerationV1(encoded, contract, checksum); err != nil {
-				return nil, nil //nolint:nilerr,nilnil // Invalid derived evidence becomes SQL NULL instead of a query error.
-			}
-			return string(encoded), nil
+			return docsqlite.SourceMetadataJSON(encoded, contract, checksum), nil
 		})
 }
 

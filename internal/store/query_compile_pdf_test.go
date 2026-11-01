@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -133,7 +134,7 @@ func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
 	}{
 		{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}},
 	} {
-		for _, damage := range []string{"checksum", "unknown contract"} {
+		for _, damage := range []string{"checksum", "unknown contract", "malformed JSON"} {
 			t.Run(adapter.name+"/"+damage, func(t *testing.T) {
 				s, err := Open(filepath.Join(t.TempDir(), "evidence.db"), adapter.driver)
 				require.NoError(t, err)
@@ -156,6 +157,10 @@ func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET checksum=?`, fakeHash("bad"))
 				case "unknown contract":
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET contract_version='source-metadata/v2'`)
+				case "malformed JSON":
+					malformed := append(canonical, '}')
+					checksum := fmt.Sprintf("%x", sha256.Sum256(malformed))
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?,checksum=?`, malformed, checksum)
 				}
 				require.NoError(t, err)
 				if damage == "unknown contract" {
