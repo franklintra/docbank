@@ -142,7 +142,7 @@ func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvi
 	stored := workerProcessingProfile(tb, renderer.Descriptor())
 	var portable, embeddings document.ProcessingProfileV1
 	require.NoError(tb, json.Unmarshal(stored.CanonicalProfile, &portable))
-	embedder := document.EmbeddingProvider(consumerEmbedder{descriptor: embeddingWorkerDescriptor(tb), source: &consumerSource{}})
+	embedder := document.EmbeddingProvider(localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(tb)})
 	if len(providers) != 0 {
 		embedder = providers[0]
 	}
