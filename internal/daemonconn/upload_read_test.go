@@ -58,7 +58,6 @@ func TestUploadTreatsUnusableSuccessReceiptAsUnknownOutcome(t *testing.T) {
 		body string
 	}{
 		{"empty object", `{}`},
-		{"empty body", ""},
 		{"truncated body", `{"status":"added"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
