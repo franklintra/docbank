@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
@@ -219,6 +220,7 @@ func TestLocalTextInspectionErrorsRemainRetryable(t *testing.T) {
 type localTextEmbeddingProvider struct {
 	descriptor document.EmbeddingDescriptor
 	embed      func(context.Context) error
+	values     []float32
 }
 
 func (p localTextEmbeddingProvider) Descriptor() document.EmbeddingDescriptor { return p.descriptor }
@@ -228,9 +230,13 @@ func (p localTextEmbeddingProvider) Embed(ctx context.Context, inputs []document
 			return document.EmbeddingResult{}, err
 		}
 	}
+	values := p.values
+	if values == nil {
+		values = []float32{1, 0}
+	}
 	result := document.EmbeddingResult{}
 	for _, input := range inputs {
-		result.Vectors = append(result.Vectors, document.EmbeddingVector{Key: input.Key, Values: []float32{1, 0}})
+		result.Vectors = append(result.Vectors, document.EmbeddingVector{Key: input.Key, Values: values})
 	}
 	return result, nil
 }
@@ -275,37 +281,67 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
+func TestLocalTextPermanentFailureKeepsBackfillDelay(t *testing.T) {
+	t.Parallel()
+	var attempts, calls atomic.Int64
+	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), values: []float32{1}, embed: func(context.Context) error {
+		calls.Add(1)
+		return nil
+	}}
+	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "invalid-response.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	failed := make(chan error, 1)
+	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second,
+		List: setup.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID },
+		Process: func(ctx context.Context, item store.DocumentSummary) error {
+			if item.ContentVersionID == node.CurrentVersionID {
+				attempts.Add(1)
+			}
+			err := setup.process(ctx, item)
+			if item.ContentVersionID == node.CurrentVersionID {
+				select {
+				case failed <- err:
+				default:
+				}
+			}
+			return err
+		}}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- lane.Run(ctx) }()
+	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
+	select {
+	case err := <-failed:
+		require.ErrorContains(t, err, string(store.EmbeddingFailureInvalidResponse))
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	require.Never(t, func() bool { return attempts.Load() > 1 }, 2*time.Second, 20*time.Millisecond, "terminal failures retain the first per-target retry delay")
+	require.Equal(t, int64(1), calls.Load())
+}
+
 func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
 	t.Parallel()
-	checks := make(chan error, 2)
-	var setup *LocalTextSetup
+	thirdStarted, release := make(chan struct{}), make(chan struct{})
 	calls := 0
 	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(ctx context.Context) error {
 		calls++
-		if calls == 2 {
-			setup.indexBuildDuration = time.Hour
-		}
-		if calls == 3 || calls == 4 {
-			space := setup.Service.profiles["pdf"].vectorSpaces["chunk"]
-			generation, err := setup.Service.catalog.ActiveVectorIndexGeneration(ctx, space)
-			want := 1
-			if calls == 4 {
-				want = 3
-			}
-			if err == nil && generation.RowCount != want {
-				err = fmt.Errorf("during document %d: want %d indexed rows, got %d", calls, want, generation.RowCount)
-			}
-			checks <- err
-			if calls == 3 {
-				setup.lastIndexBuild = time.Now().Add(-5 * time.Hour)
+		if calls == 3 {
+			close(thirdStarted)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 		return nil
 	}}
 	renderer := newWorkerProvider(t)
 	renderer.textForSource = true
-	fixture, lane := newLocalTextBackfillFixture(t, renderer, provider)
-	setup = lane
+	fixture, setup := newLocalTextBackfillFixture(t, renderer, provider)
 	for i := range 8 {
 		data := append(mediatest.PDF(), []byte(fmt.Sprintf("\n%% source %d", i))...)
 		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
@@ -313,23 +349,37 @@ func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
 		_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), fmt.Sprintf("batch-%d.pdf", i), written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 		require.NoError(t, err)
 	}
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog,
+		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
+		}, Mutate: setup.Service.gate.MutateContext, Owner: "index-worker", BuildLease: 5 * time.Minute, ReaderLease: 5 * time.Minute, IdleDelay: time.Second})
+	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	done := make(chan error, 1)
-	go func() { done <- setup.Backfill(ctx, nil) }()
-	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-	for range 2 {
-		select {
-		case err := <-checks:
-			require.NoError(t, err)
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
+	backfillDone, indexDone := make(chan error, 1), make(chan error, 1)
+	go func() { backfillDone <- setup.Backfill(ctx, nil) }()
+	go func() { indexDone <- indexer.Run(ctx) }()
+	defer func() {
+		cancel()
+		require.ErrorIs(t, <-backfillDone, ctx.Err())
+		require.ErrorIs(t, <-indexDone, ctx.Err())
+	}()
+	select {
+	case <-thirdStarted:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 	space := setup.Service.profiles["pdf"].vectorSpaces["chunk"]
+	var during store.VectorIndexGenerationRecord
+	require.Eventually(t, func() bool {
+		var err error
+		during, err = fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
+		return err == nil && during.RowCount == 2
+	}, 5*time.Second, 10*time.Millisecond, "the recurring publisher runs while backfill is still active")
+	close(release)
 	require.Eventually(t, func() bool {
 		generation, err := fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
-		return err == nil && generation.RowCount == 8
-	}, 5*time.Second, 10*time.Millisecond, "idle publication includes the final documents")
+		return err == nil && generation.RowCount == 8 && generation.ID != during.ID
+	}, 5*time.Second, 10*time.Millisecond, "the recurring publisher includes the final documents")
 }
 
 func TestLocalTextTargetPageFiltersCachedCandidates(t *testing.T) {
