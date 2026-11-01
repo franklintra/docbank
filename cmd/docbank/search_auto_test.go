@@ -348,7 +348,7 @@ func TestSearchCLIAgentAndExplicitLexicalFilters(t *testing.T) {
 	assert.Contains(t, out, "match=fuzzy_name path=/docs/query-words.txt")
 }
 
-func TestPDFFilterCLIRequestAndEcho(t *testing.T) {
+func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	t.Cleanup(func() { resetFlags(rootCmd) })

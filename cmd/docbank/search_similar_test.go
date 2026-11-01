@@ -21,7 +21,7 @@ func TestSearchSimilarRejectsRerankingBeforeDaemon(t *testing.T) {
 	require.ErrorContains(t, err, "--similar-to cannot be combined with --rerank")
 }
 
-func TestSourcePresentRejectsUnsupportedSearchModes(t *testing.T) {
+func TestSourcePresentAndPDFFilterRejectUnsupportedSearchModes(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	t.Cleanup(func() { resetFlags(rootCmd) })
 	for _, tc := range []struct {

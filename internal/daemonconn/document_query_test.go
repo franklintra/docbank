@@ -85,7 +85,7 @@ func TestResolveDocumentSummariesRejectsDuplicateIdentity(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidDocumentQuery)
 }
 
-func TestSourcePresentReadsRequireDaemonBinding(t *testing.T) {
+func TestSourcePresentAndPDFFilterReadsRequireDaemonBinding(t *testing.T) {
 	for _, opts := range []daemonconn.SearchOptions{
 		{SourcePresent: true},
 		{PDFFilter: "pdf_encrypted:true"},

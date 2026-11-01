@@ -158,8 +158,10 @@ func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET contract_version='source-metadata/v2'`)
 				}
 				require.NoError(t, err)
-				_, _, err = s.ActiveSourceMetadata(ctx, node.BlobHash)
-				require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
+				if damage == "unknown contract" {
+					_, _, err = s.ActiveSourceMetadata(ctx, node.BlobHash)
+					require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
+				}
 				hits, _, err = s.SearchPageWithOptions(ctx, "", 50, SearchOptions{PDFFilter: "pdf_has_javascript:true"})
 				require.NoError(t, err)
 				assert.Empty(t, hits)

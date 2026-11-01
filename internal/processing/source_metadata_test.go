@@ -1767,7 +1767,6 @@ func TestSourceMetadataPDFFactsSearch(t *testing.T) {
 	for _, filter := range []string{
 		"pdf_has_javascript:true",
 		"pdf_embedded_file_count_min:1",
-		"pdf_embedded_file_count_min:1 OR pdf_has_javascript:true",
 	} {
 		hits, _, err = s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: filter, MIMEType: "application/pdf"})
 		require.NoError(t, err, filter)

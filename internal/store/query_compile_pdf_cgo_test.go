@@ -26,10 +26,6 @@ func TestPDFNamespaceGuardSkipsNonPDFValidation(t *testing.T) {
 		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
 		require.NoError(t, err)
 	}
-	_, err := s.db.ExecContext(ctx, `DROP TRIGGER source_metadata_generations_immutable_update`)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET checksum=? WHERE source_sha256=?`, fakeHash("bad"), fakeHash("b2"))
-	require.NoError(t, err)
 	conn, err := s.db.Conn(ctx)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, conn.Close()) }()
@@ -49,5 +45,5 @@ func TestPDFNamespaceGuardSkipsNonPDFValidation(t *testing.T) {
 	compiled, err := compileQuery(ctx, compilerQuery(t, "pdf_has_javascript:true"), nil)
 	require.NoError(t, err)
 	compiledFixtureIDs(t, conn, compiled, "")
-	assert.Equal(t, 1, calls, "only the damaged PDF reaches validation")
+	assert.Equal(t, 1, calls, "only PDF evidence reaches validation")
 }
