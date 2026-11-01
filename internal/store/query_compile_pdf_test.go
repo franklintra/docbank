@@ -38,6 +38,9 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 			{"embedded_file_count", document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(i - 1))}},
 			{"permissions", document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}},
 		} {
+			if fact.key == "last_signature_covers_file" && i == 1 || fact.key == "permissions" && i != 2 {
+				continue
+			}
 			sourceField := fact.key
 			if fact.key == "permissions" {
 				sourceField = "Permissions"
@@ -57,12 +60,13 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 		{"pdf_encrypted:false", []int64{nodes[1].ID, nodes[3].ID}},
 		{"pdf_embedded_file_count_min:1", []int64{nodes[2].ID, nodes[3].ID}},
 		{"pdf_last_signature_covers_file:false", []int64{nodes[2].ID}},
+		{"pdf_last_signature_covers_file:true", []int64{nodes[3].ID}},
 		{"pdf_has_javascript:true", []int64{nodes[3].ID}},
 		{"pdf_has_launch_actions:true", []int64{nodes[2].ID}},
 		{"pdf_signature_field_count:0", []int64{nodes[1].ID}},
 		{"pdf_signature_field_count_max:1", []int64{nodes[1].ID, nodes[2].ID}},
 		{"pdf_embedded_file_count:0", []int64{nodes[1].ID}},
-		{`pdf_permissions:"Print"`, []int64{nodes[1].ID, nodes[2].ID, nodes[3].ID}},
+		{`pdf_permissions:"Print"`, []int64{nodes[2].ID}},
 		{`pdf_permissions:"print"`, nil},
 		{`pdf_permissions:"High-quality"`, nil},
 		{"pdf_embedded_file_count_min:1 OR pdf_has_javascript:true", []int64{nodes[2].ID, nodes[3].ID}},

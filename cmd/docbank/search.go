@@ -594,7 +594,7 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "match a PDF fact expression")
+	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "e.g. pdf_has_javascript:true")
 	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")

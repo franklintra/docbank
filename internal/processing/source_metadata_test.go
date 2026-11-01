@@ -1752,11 +1752,26 @@ func TestSourceMetadataPDFFactsSearch(t *testing.T) {
 	completed, err := BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload}, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}})
 	require.NoError(t, err)
 	require.Equal(t, 1, completed)
-	hits, _, err := s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: "pdf_embedded_file_count:0 AND pdf_has_javascript:false"})
+	payload = mediatest.PDFWithActionsAndAttachment()
+	digest = sha256.Sum256(payload)
+	hash = hex.EncodeToString(digest[:])
+	positive, err := s.CreateFile(ctx, s.RootID(), "active.pdf", hash, int64(len(payload)), "application/pdf")
+	require.NoError(t, err)
+	completed, err = BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload}, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}})
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	hits, _, err := s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: "pdf_embedded_file_count:0 AND pdf_has_javascript:false", MIMEType: "application/pdf"})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, node.ID, hits[0].Node.ID)
-	hits, _, err = s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"})
-	require.NoError(t, err)
-	assert.Empty(t, hits)
+	for _, filter := range []string{
+		"pdf_has_javascript:true",
+		"pdf_embedded_file_count_min:1",
+		"pdf_embedded_file_count_min:1 OR pdf_has_javascript:true",
+	} {
+		hits, _, err = s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: filter, MIMEType: "application/pdf"})
+		require.NoError(t, err, filter)
+		require.Len(t, hits, 1, filter)
+		assert.Equal(t, positive.ID, hits[0].Node.ID, filter)
+	}
 }
