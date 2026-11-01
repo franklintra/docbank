@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/embedlocal"
 )
 
 func readLocalText(root string) (config.LocalTextConfig, error) {
@@ -22,12 +23,19 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		return choice, nil
 	}
 	if err == nil {
-		err = json.Unmarshal(data, &choice)
+		err = json.Unmarshal(data, &choice, json.RejectUnknownMembers(true))
+		if err == nil && choice.Version != 1 {
+			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
+		}
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local")) {
+			err = errors.New("local-text selection requires a profile and auto or local server")
+		}
 	}
 	return choice, err
 }
 
 func saveLocalText(root string, choice config.LocalTextConfig) error {
+	choice.Version = 1
 	data, err := json.Marshal(choice)
 	if err != nil {
 		return err
@@ -63,12 +71,17 @@ func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bo
 		return cfg, false, false, err
 	}
 	managed, rebuild := false, false
+	textBindings := 0
 	for _, binding := range profile.Embeddings {
 		original, err := cfg.EmbeddingProfile(binding)
 		if err != nil {
 			return cfg, false, false, err
 		}
-		if original.InputKind != "rendition_chunk" || original.Runtime == nil {
+		if original.InputKind != "rendition_chunk" {
+			continue
+		}
+		textBindings++
+		if original.Runtime == nil {
 			return cfg, false, false, processing.ErrProfileNotConfigured
 		}
 		if mode == "auto" && original.Runtime.Endpoint != "" {
@@ -80,8 +93,11 @@ func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bo
 			next.Activation = original.Activation
 			rebuild = true
 		}
-		if next.Model != "nomic-embed-text" || next.Dimensions != 768 {
-			return cfg, false, false, fmt.Errorf("profile %q: managed embeddings require nomic-embed-text with 768 dimensions", name)
+		if next.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" {
+			return cfg, false, false, fmt.Errorf("%w: profile %q requires an OpenAI-compatible Nomic runtime; choose --profile local-text", processing.ErrLocalTextConfiguration, name)
+		}
+		if next.Dimensions != 768 {
+			return cfg, false, false, fmt.Errorf("%w: profile %q requires Nomic with 768 dimensions; choose --profile local-text or configure 768 dimensions", processing.ErrLocalTextConfiguration, name)
 		}
 		next.Runtime = new(*next.Runtime)
 		next.Runtime.Managed, next.Runtime.ServerMode = true, mode
@@ -92,14 +108,23 @@ func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bo
 		cfg.EmbeddingProfiles[binding] = next
 		managed = true
 	}
+	if textBindings == 0 {
+		return cfg, false, false, processing.ErrProfileNotConfigured
+	}
 	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: profile}
 	return cfg, managed, rebuild, nil
 }
 
 func defaultLocalTextProfile(cfg config.Config) string {
 	for _, name := range slices.Sorted(maps.Keys(cfg.ProcessingProfiles)) {
-		if _, _, _, err := localTextCandidate(cfg, name, "local"); err == nil {
-			return name
+		p := cfg.ProcessingProfiles[name]
+		for _, binding := range p.Embeddings {
+			e, err := cfg.EmbeddingProfile(binding)
+			if err == nil && e.Runtime != nil && e.InputKind == "rendition_chunk" && e.Model == "nomic-embed-text" && e.Dimensions == 768 {
+				if _, _, _, err := localTextCandidate(cfg, name, "local"); err == nil {
+					return name
+				}
+			}
 		}
 	}
 	return config.LocalTextProfile
@@ -109,8 +134,11 @@ func localTextStartup(ctx context.Context, managed bool, mode string) error {
 	if !managed {
 		return nil
 	}
-	_, err := localEmbeddingOrigin(ctx, mode)
-	return err
+	_, err := embedlocal.Endpoint(ctx, embedlocal.Options{SkipOllama: mode == "local"})
+	if err != nil {
+		return fmt.Errorf("embeddings server is not ready; run docbank processing local to install and start it: %w", err)
+	}
+	return nil
 }
 
 func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.ProfileConfig, candidate config.Config, name string, selected processing.ProfileConfig) (config.Config, error) {

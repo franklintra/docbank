@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -328,16 +327,21 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if choice.Profile != "" {
 		selected, candidate, _, _, err := candidateProfiles(choice.Profile, choice.Server)
-		if err != nil {
+		if errors.Is(err, processing.ErrProfileNotConfigured) {
+			logger.Warn("local text selection is unavailable; indexing remains inactive", "profile", choice.Profile, "error", err)
+			choice = config.LocalTextConfig{}
+		} else if err != nil {
 			return fmt.Errorf("restore local text selection: %w", err)
 		}
-		p, ok := selected[choice.Profile]
-		if !ok {
-			return processing.ErrProfileNotConfigured
-		}
-		cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, p)
-		if err != nil {
-			return err
+		if choice.Profile != "" {
+			p, ok := selected[choice.Profile]
+			if !ok {
+				return processing.ErrProfileNotConfigured
+			}
+			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, p)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -389,7 +393,6 @@ func runServe(ctx context.Context) (retErr error) {
 		Save: func(name, mode string) error {
 			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
 		},
-		Remove: func() error { return os.Remove(filepath.Join(layout.Root, "local-text.json")) },
 	}
 	localText.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
 		profiles, _, managed, rebuild, err := candidateProfiles(name, mode)

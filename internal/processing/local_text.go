@@ -10,8 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 )
+
+var ErrLocalTextConfiguration = errors.New("unsupported local text configuration")
 
 type LocalTextPlan struct {
 	Fingerprint        string    `json:"fingerprint"`
@@ -21,7 +25,6 @@ type LocalTextPlan struct {
 	ProfileFingerprint string    `json:"profile_fingerprint"`
 	Models             []string  `json:"models"`
 	VectorEffect       string    `json:"vector_effect"`
-	EligibleDocuments  int       `json:"eligible_documents"`
 	Managed            bool      `json:"managed"`
 	Flow               []FlowHop `json:"flow"`
 	RetainedClasses    []string  `json:"retained_classes"`
@@ -37,12 +40,11 @@ type LocalTextSetup struct {
 	Selected       string
 	Startup        func(context.Context, bool, string) error
 	Save           func(string, string) error
-	Remove         func() error
 	mu             sync.Mutex
-	ineligible     sync.Map
+	ineligible     map[string]struct{}
 }
 
-func (setup *LocalTextSetup) review(ctx context.Context, name, mode string, count bool) (LocalTextPlan, *Service, error) {
+func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (LocalTextPlan, *Service, error) {
 	if name == "" {
 		name = setup.DefaultProfile
 	}
@@ -78,35 +80,12 @@ func (setup *LocalTextSetup) review(ctx context.Context, name, mode string, coun
 		return LocalTextPlan{}, nil, err
 	}
 	plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(encoded))
-	if count {
-		after := ""
-		for {
-			page, err := service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), 50)
-			if err != nil {
-				return LocalTextPlan{}, nil, err
-			}
-			for _, item := range page {
-				selector := Selector{Profile: name, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
-				preview, err := service.Plan(ctx, selector)
-				if err != nil {
-					return LocalTextPlan{}, nil, err
-				}
-				if preview.RenditionIneligibleReason == "" {
-					plan.EligibleDocuments++
-				}
-			}
-			if len(page) < 50 {
-				break
-			}
-			after = page[len(page)-1].ContentVersionID
-		}
-	}
 	keep = true
 	return plan, service, nil
 }
 
 func (setup *LocalTextSetup) Plan(ctx context.Context, name, mode string) (LocalTextPlan, error) {
-	plan, service, err := setup.review(ctx, name, mode, true)
+	plan, service, err := setup.review(ctx, name, mode)
 	if service != nil {
 		service.Stop()
 	}
@@ -116,7 +95,7 @@ func (setup *LocalTextSetup) Plan(ctx context.Context, name, mode string) (Local
 func (setup *LocalTextSetup) Apply(ctx context.Context, name, mode, fingerprint string) (LocalTextPlan, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
-	plan, service, err := setup.review(ctx, name, mode, false)
+	plan, service, err := setup.review(ctx, name, mode)
 	if err != nil {
 		return LocalTextPlan{}, err
 	}
@@ -127,15 +106,16 @@ func (setup *LocalTextSetup) Apply(ctx context.Context, name, mode, fingerprint 
 	if err := setup.Startup(ctx, plan.Managed, mode); err != nil {
 		return LocalTextPlan{}, err
 	}
-	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) }); err != nil {
-		return LocalTextPlan{}, err
-	}
 	if err := service.grantProfileConsent(ctx, service.profiles[plan.Profile], nil); err != nil {
-		if cleanup := setup.Remove(); cleanup != nil {
-			return LocalTextPlan{}, fmt.Errorf("consent failed; saved choice remains as partial state: %w", errors.Join(err, cleanup))
-		}
 		return LocalTextPlan{}, err
 	}
+	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) }); err != nil {
+		if errors.Is(err, atomicfile.ErrPublished) {
+			return LocalTextPlan{}, fmt.Errorf("%w: local text selection was published but its durability check failed: %w", ErrConsentSaved, err)
+		}
+		return LocalTextPlan{}, fmt.Errorf("%w: local text selection could not be saved; previous selection remains: %w", ErrConsentSaved, err)
+	}
+
 	return plan, nil
 }
 
@@ -158,7 +138,7 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 }
 
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
-	if _, found := setup.ineligible.Load(item.ContentVersionID); found {
+	if _, found := setup.ineligible[item.ContentVersionID]; found {
 		return nil
 	}
 	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
@@ -167,7 +147,17 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 		return err
 	}
 	if plan.RenditionIneligibleReason != "" {
-		setup.ineligible.Store(item.ContentVersionID, true)
+		if plan.RenditionIneligibleReason != string(media.CapabilityReasonPDFPasswordRequired) {
+			// Source versions and the selected runtime policy are immutable.
+			// Password availability can change without changing either identity.
+			if setup.ineligible == nil {
+				setup.ineligible = make(map[string]struct{})
+			}
+			if len(setup.ineligible) == 1024 {
+				clear(setup.ineligible)
+			}
+			setup.ineligible[item.ContentVersionID] = struct{}{}
+		}
 		return nil
 	}
 	_, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})

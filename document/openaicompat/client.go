@@ -483,6 +483,9 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 
 func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, error) {
 	if profile.ManagedService != "" {
+		if profile.ManagedService != "kit-embed" || (profile.SelectionMode != "auto" && profile.SelectionMode != "local") || profile.ResolveOrigin == nil {
+			return Profile{}, document.EmbeddingDescriptor{}, errors.New("managed embeddings require kit-embed, auto or local mode, and an origin resolver")
+		}
 		// Kit's request encoder needs an origin; the policy transport replaces it.
 		profile.Origin = "http://127.0.0.1"
 	}

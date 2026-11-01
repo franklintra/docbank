@@ -9,7 +9,16 @@ import (
 
 func TestMissingProcessingTargetsPagesCurrentLiveVersions(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkMissingProcessingTargets(t, newTestStore(t))
+}
+
+func TestMissingProcessingTargetsPostgres(t *testing.T) {
+	t.Parallel()
+	checkMissingProcessingTargets(t, newPostgresQueryStore(t))
+}
+
+func checkMissingProcessingTargets(t *testing.T, s *Store) {
+	t.Helper()
 	directory, err := s.Mkdir(t.Context(), s.RootID(), "temporary")
 	require.NoError(t, err)
 	for i := range 3 {

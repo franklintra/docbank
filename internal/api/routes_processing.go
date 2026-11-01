@@ -793,6 +793,9 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 }
 
 func fromProcessingError(err error) error {
+	if errors.Is(err, processing.ErrLocalTextConfiguration) {
+		return NewError(http.StatusUnprocessableEntity, "unsupported_local_text_configuration", err.Error())
+	}
 	detailPrefix := ""
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "
@@ -845,6 +848,9 @@ func fromProcessingError(err error) error {
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
+	}
+	if errors.Is(err, processing.ErrConsentSaved) {
+		return NewError(http.StatusInternalServerError, "processing_failed", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
 }

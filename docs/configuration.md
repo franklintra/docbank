@@ -1090,9 +1090,9 @@ configuration, or mismatched descriptor.
 
 #### Local text indexing
 
-Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile, all provider disclosures, an estimated eligible count, and missing download bytes before one confirmation. It starts the shared server, saves the approved profile and server in `local-text.json` beside the vault's `config.toml`, grants consent, and restarts the daemon. Your TOML stays intact.
+Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile, all provider disclosures, and missing download bytes before one confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.
 
-`server = "auto"` keeps an explicit embedding endpoint or prefers Ollama before Kit's shared server. An explicit `local` selection overrides both the configured endpoint and Ollama. `--profile NAME` preserves a Nomic profile's recipe and vector space; another model switches its text embedding recipe to Nomic after a rebuild warning. Vision and image embeddings keep their configured providers.
+`server = "auto"` keeps an explicit embedding endpoint or prefers Ollama before Kit's shared server. An explicit `local` selection overrides both the configured endpoint and Ollama. Omitting `--profile` selects a configured Nomic text profile, falling back to `local-text`. `--profile NAME` preserves a Nomic profile's recipe and vector space; another model switches its text embedding recipe to Nomic after a rebuild warning. Vision and image embeddings keep their configured providers.
 
 The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Declining or failing startup leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 

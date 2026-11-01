@@ -198,6 +198,7 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, bundle.registry.Ready())
 	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
+
 	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
 	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
 }
@@ -290,6 +291,27 @@ func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *
 	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
 	require.NoError(t, err)
 	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
+	t.Run("local text switch preserves the image provider", func(t *testing.T) {
+		mixed, err := cfg.WithLocalText()
+		require.NoError(t, err)
+		p := mixed.ProcessingProfiles[config.LocalTextProfile]
+		p.Embeddings = append(p.Embeddings, "voyage")
+		mixed.ProcessingProfiles[config.LocalTextProfile] = p
+		candidate, managed, rebuild, err := localTextCandidate(mixed, config.LocalTextProfile, "local")
+		require.NoError(t, err)
+		require.True(t, managed)
+		require.False(t, rebuild)
+		require.Equal(t, profile, candidate.EmbeddingProfiles["voyage"])
+		switched, err := configureEmbeddingRuntimeBundle(candidate, unavailableEmbeddingBlobs{}, t.TempDir())
+		require.NoError(t, err)
+		require.Contains(t, switched.registry.Fingerprints(), final.Fingerprint)
+		p.Embeddings = []string{"voyage"}
+		mixed.ProcessingProfiles[config.LocalTextProfile] = p
+		_, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
+		require.False(t, managed)
+		require.False(t, rebuild)
+		require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
+	})
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {

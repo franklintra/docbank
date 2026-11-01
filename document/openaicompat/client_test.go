@@ -852,3 +852,35 @@ func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, originalPolicy, nextPolicy)
 }
+
+func TestManagedServiceRejectsInvalidBinding(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		service, mode string
+		resolver      bool
+	}{
+		{"unknown", "local", true}, {"kit-embed", "invalid", true}, {"kit-embed", "local", false},
+	} {
+		t.Run(tc.service+tc.mode, func(t *testing.T) {
+			p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+			p.ManagedService, p.SelectionMode = tc.service, tc.mode
+			if tc.resolver {
+				p.ResolveOrigin = func(context.Context) (string, error) { return "http://127.0.0.1:1234", nil }
+			}
+			_, err := New(p, nil, nil)
+			require.ErrorContains(t, err, "managed embeddings require")
+		})
+	}
+}
+
+func TestManagedServiceRejectsTaggedNomicModels(t *testing.T) {
+	t.Parallel()
+	for _, model := range []string{"nomic-embed-text:latest", "nomic-embed-text:v1.5"} {
+		t.Run(model, func(t *testing.T) {
+			p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+			p.Descriptor.Model = model
+			_, err := New(p, nil, nil)
+			require.EqualError(t, err, "openaicompat: invalid descriptor identity: embedding model contains unsupported characters")
+		})
+	}
+}

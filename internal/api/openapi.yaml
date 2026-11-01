@@ -8338,9 +8338,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        eligible_documents:
-          format: int64
-          type: integer
         fingerprint:
           type: string
         flow:
@@ -8377,7 +8374,6 @@ components:
         - profile_fingerprint
         - models
         - vector_effect
-        - eligible_documents
         - managed
         - flow
         - retained_classes

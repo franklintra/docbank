@@ -3805,7 +3805,6 @@ export interface ProcessingFlowHop {
 export interface LocalTextPlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  eligible_documents: number;
   fingerprint: string;
   flow: ProcessingFlowHop[];
   managed: boolean;

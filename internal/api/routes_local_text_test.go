@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -16,7 +17,7 @@ import (
 func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	t.Parallel()
 	var saves, starts atomic.Int64
-	var startupFailure atomic.Bool
+	var startupFailure, unsupported atomic.Bool
 	startupFailure.Store(true)
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
 		configure := configureProcessingTestServiceWithEmbeddingProvider(t, newProcessingTestEmbeddingProvider(t), true)
@@ -35,11 +36,13 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 				saves.Add(1)
 				return nil
 			},
-			Remove: func() error { t.Fatal("successful grant must keep selection"); return nil },
 		}
 		setup.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
 			require.Equal(t, "private", name)
 			require.Equal(t, "local", mode)
+			if unsupported.Load() {
+				return nil, false, false, fmt.Errorf("%w: choose --profile local-text or configure 768 dimensions", processing.ErrLocalTextConfiguration)
+			}
 			candidate := *deps
 			configure(&candidate)
 			return candidate.Processing, false, false, nil
@@ -51,7 +54,6 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var plan api.LocalTextPlan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
-	require.Equal(t, 1, plan.EligibleDocuments)
 	require.Equal(t, "this vault and new imports", plan.Scope)
 	require.Len(t, plan.Flow, 3)
 	require.Equal(t, "query_embedding", plan.Flow[2].Capability)
@@ -84,4 +86,8 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Equal(t, int64(1), saves.Load())
+	unsupported.Store(true)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local"})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "configure 768 dimensions")
 }

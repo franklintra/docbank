@@ -72,7 +72,7 @@ func newProcessingLocalCommand() *cobra.Command {
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nmodel:\t%s\nvector space:\t%s\neligible documents (estimate):\t%d\nscope:\tthis vault and new imports\n", p.Profile, p.Server, strings.Join(p.Models, ","), p.VectorEffect, p.EligibleDocuments)
+	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nmodel:\t%s\nvector space:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, strings.Join(p.Models, ","), p.VectorEffect)
 	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)
@@ -91,6 +91,7 @@ func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool, server string
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
 	prompted := false
+	var installation *embedlocal.Installation
 	approve := func(_ context.Context, bytes int64) (bool, error) {
 		prompted = true
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "missing download: %d bytes\n", bytes); err != nil {
@@ -115,16 +116,25 @@ func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool, server string
 			if err != nil {
 				return fmt.Errorf("find embeddings directory: %w", err)
 			}
-			if _, err := install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: approve}); err != nil {
+			installed, err := install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: approve})
+			if err != nil {
 				return err
 			}
+			installation = &installed
 		} else if err != nil {
 			return fmt.Errorf("discover embeddings server: %w", err)
 		}
 	}
 	if !prompted {
-		_, err := approve(cmd.Context(), 0)
-		return err
+		if _, err := approve(cmd.Context(), 0); err != nil {
+			return err
+		}
+	}
+	if installation != nil {
+		_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: server == "local", DataDir: installation.DataDir, Executable: installation.Executable})
+		if err != nil {
+			return fmt.Errorf("start embeddings server: %w", err)
+		}
 	}
 	return nil
 }

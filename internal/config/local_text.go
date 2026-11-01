@@ -17,6 +17,7 @@ const LocalTextProfile = "local-text"
 
 // LocalTextConfig selects vault-wide, ongoing text indexing after approval.
 type LocalTextConfig struct {
+	Version int    `json:"version"`
 	Profile string `json:"profile"`
 	Server  string `json:"server"`
 }
