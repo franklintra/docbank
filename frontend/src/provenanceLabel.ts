@@ -28,5 +28,5 @@ export function provenanceSourceLabel(kind: string): string {
 
 // JSON carries response headers as base64 to preserve their observed bytes.
 export function urlFetchHeader(b64: string): string {
-  return formatRawBytes(Uint8Array.from(atob(b64).replace(/\\/g, "\\\\"), (c) => c.charCodeAt(0)));
+  return formatRawBytes(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
 }

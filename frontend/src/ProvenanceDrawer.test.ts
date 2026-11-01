@@ -127,6 +127,7 @@ it("offers the import ID for command-line imports", async () => {
 });
 
 it.each([
+  { bytes: 'W/"a\\b"', display: 'W/"a\\b"' },
   { bytes: 'W/"\\xff\xff"', display: 'W/"\\\\xff\\xff"' },
   { bytes: null, display: null },
 ])("shows URL fetch evidence with optional headers: $display", async (headers) => {

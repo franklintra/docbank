@@ -34,11 +34,11 @@ export function formatRawBytes(bytes: Uint8Array, invalidPrefix = ""): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return (
-      invalidPrefix +
-      Array.from(bytes, (byte) =>
-        byte < 128 ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`,
-      ).join("")
-    );
+    const raw = Array.from(bytes, (byte) =>
+      byte < 128
+        ? String.fromCharCode(byte).replace(/\\/g, "\\\\")
+        : `\\x${byte.toString(16).padStart(2, "0")}`,
+    ).join("");
+    return invalidPrefix + raw;
   }
 }
