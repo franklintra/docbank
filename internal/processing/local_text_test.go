@@ -357,30 +357,37 @@ func TestLocalTextTargetPageFiltersCachedCandidates(t *testing.T) {
 }
 
 func BenchmarkLocalTextIdleSweep(b *testing.B) {
-	fixture, setup := newLocalTextBackfillFixture(b, newWorkerProvider(b))
+	fixture, setup := newLocalTextBackfillFixture(b, newWorkerProvider(b), localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(b)})
 	version, err := fixture.catalog.ContentVersionByID(b.Context(), fixture.versionID)
 	require.NoError(b, err)
-	setup.skips = make(map[localTextSkipKey]*localTextSkip)
+	written, err := fixture.blobs.WriteDetailedContext(b.Context(), bytes.NewReader(mediatest.PDF()))
+	require.NoError(b, err)
+	setup.skips = map[localTextSkipKey]*localTextSkip{{version.ID, "source.pdf"}: {seen: true}}
 	for i := range 19999 {
 		name := fmt.Sprintf("input-%05d.pdf", i)
-		node, err := fixture.catalog.CreateFile(b.Context(), fixture.catalog.RootID(), name, version.BlobHash, version.Size, "application/pdf")
-		require.NoError(b, err)
-		if i < 19000 {
+		if i < 18999 {
+			node, err := fixture.catalog.CreateFile(b.Context(), fixture.catalog.RootID(), name, version.BlobHash, version.Size, "application/pdf")
+			require.NoError(b, err)
 			setup.skips[localTextSkipKey{node.CurrentVersionID, name}] = &localTextSkip{seen: true}
+			continue
 		}
+		node, err := fixture.catalog.CreateFile(b.Context(), fixture.catalog.RootID(), name, written.Hash, written.Size, "application/pdf", processingBlobPhysical(b, written))
+		require.NoError(b, err)
+		selector := Selector{Profile: setup.Selected, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+		plan, err := setup.Service.Plan(b.Context(), selector)
+		require.NoError(b, err)
+		job, err := setup.Service.Start(b.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
+			runOptions: processingRunOptions{deferIndex: true}})
+		require.NoError(b, err)
+		require.Len(b, job.EmbeddingJobIDs, 1)
+		status, err := fixture.catalog.EmbeddingJobByID(b.Context(), job.EmbeddingJobIDs[0])
+		require.NoError(b, err)
+		require.Equal(b, "completed", status.State)
 	}
 	b.ResetTimer()
 	for b.Loop() {
-		after, count := "", 0
-		for {
-			targets, err := setup.targets(b.Context(), after, 50)
-			require.NoError(b, err)
-			if len(targets) == 0 {
-				break
-			}
-			count += len(targets)
-			after = targets[len(targets)-1].ContentVersionID
-		}
-		require.Equal(b, 1000, count)
+		targets, err := setup.targets(b.Context(), "", 50)
+		require.NoError(b, err)
+		require.Empty(b, targets)
 	}
 }
