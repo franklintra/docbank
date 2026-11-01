@@ -33,7 +33,8 @@ func compilePDFPredicate(field, value string, start, end int) (compiledQueryFrag
    AND json_extract(fact.value, '$.key')=?
    AND json_extract(fact.value, '$.namespace')='pdf.info'
    AND json_extract(fact.value, '$.value.kind')=? AND ` + comparison + `)`,
-		args: []any{"pdf.info." + strings.TrimPrefix(base, "pdf_"), kind, operand},
+		usesPDFFacts: true,
+		args:         []any{"pdf.info." + strings.TrimPrefix(base, "pdf_"), kind, operand},
 	}, nil
 }
 

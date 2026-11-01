@@ -59,7 +59,7 @@ docbank search --pdf-filter 'pdf_permissions:"Print"' --under /cases
 
 Append `_min` or `_max` to either count field for an inclusive bound. Combine fields with `AND`, `OR`, `NOT`, and parentheses. Quote permission labels containing spaces. Labels are Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, High-quality print flag, and None.
 
-For a full-vault review, wait until **Reading file metadata** is idle in **Jobs**, or `extract:source-metadata` is idle in `docbank jobs`. Background processing can still be recording facts after an import or upgrade.
+Background processing records facts after an import or upgrade. PDF fact searches report `source_metadata_pending`, the number of live current files across the vault without metadata from the current extractor, including files outside a folder-scoped query. A positive count means PDF results may be incomplete. Zero establishes extraction coverage; some PDF facts may still be unknown. Query snapshots retain the count across pages, and rerunning refreshes it.
 
 Only recorded observations match. An unknown observation matches neither `false` nor zero. `NOT` excludes matching documents and can include documents with unknown observations. Only the active evidence for the current file bytes counts. Signature coverage describes the declared byte range, without authenticating the signer. See [PDF evidence](../architecture/source-metadata.md#pdf-evidence) for the facts' limits.
 

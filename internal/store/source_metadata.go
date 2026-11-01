@@ -356,3 +356,24 @@ func (s *Store) nodeSourceMetadataView(
 	}
 	return view, nil
 }
+
+// SourceMetadataPending counts live current files without active metadata from
+// the selected extractor, including aliases regardless of their MIME label.
+func (s *Store) SourceMetadataPending(ctx context.Context, fingerprint string) (int64, error) {
+	return sourceMetadataPending(ctx, s.db, fingerprint)
+}
+
+func sourceMetadataPending(ctx context.Context, q metadataQuerier, fingerprint string) (int64, error) {
+	var count int64
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes n
+ JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+ WHERE n.kind='file' AND n.trashed_at IS NULL AND NOT EXISTS (
+ SELECT 1 FROM source_metadata_heads h
+ JOIN source_metadata_generations g ON g.generation_id=h.generation_id
+ WHERE h.source_sha256=cv.blob_hash AND g.contract_version=? AND g.extractor_fingerprint=?)`,
+		document.SourceMetadataContractV1, fingerprint).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting pending source metadata: %w", err)
+	}
+	return count, nil
+}

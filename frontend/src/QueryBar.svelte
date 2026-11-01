@@ -273,7 +273,10 @@
               <p>
                 PDF evidence: <code>pdf_embedded_file_count_min:1 OR pdf_has_javascript:true</code>.
               </p>
-              <p>For a full-vault review, wait until Reading file metadata is idle in Jobs.</p>
+              <p>
+                A positive pending metadata count means PDF results may be incomplete. Zero
+                establishes extraction coverage only.
+              </p>
               <p>MIME filters narrow the result type.</p>
               <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
             </details>{/if}

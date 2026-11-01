@@ -119,6 +119,9 @@ func writeLexicalSearchAgent(cmd *cobra.Command, query string, report api.Search
 			header.details = append(header.details, "fuzzy_reasons="+searchAgentValue(strings.Join(fuzzy.Reasons, ",")))
 		}
 	}
+	if report.SourceMetadataPending != nil && *report.SourceMetadataPending > 0 {
+		header.details = append(header.details, "source_metadata_pending="+strconv.FormatInt(*report.SourceMetadataPending, 10))
+	}
 	if err := writeSearchAgentHeader(cmd, header); err != nil {
 		return err
 	}

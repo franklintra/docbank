@@ -68,8 +68,8 @@ appends matching folders. Filters, --fuzzy, --limit above
 plus folders.
 --agent prints an OK header and one line per hit.
 --fuzzy appends filename/path matches with one typo.
-PDF filters use recorded file metadata. For a full-vault review, wait until
-source-metadata processing is idle in docbank jobs. MIME filters narrow the
+PDF filters use recorded file metadata. The source_metadata_pending count covers live files across the vault awaiting
+current metadata. Zero establishes extraction coverage; some PDF facts may remain unknown. MIME filters narrow the
 result type.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
@@ -257,6 +257,9 @@ See docs/usage/search.md.`,
 }
 
 func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underPath string) error {
+	if err := writeSourceMetadataNotice(cmd, rep.SourceMetadataPending); err != nil {
+		return err
+	}
 	if rep.Fuzzy != nil && rep.Fuzzy.Status != store.FuzzyStatusComplete {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "incomplete fuzzy search (%s: %s); "+
 			"use a more specific ASCII query or --under; "+
@@ -634,4 +637,15 @@ func init() {
 	searchCmd.Flags().BoolVar(&searchFuzzy, "fuzzy", false, "append bounded ASCII filename/path matches with at most one typo")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(searchCmd)
+}
+
+func writeSourceMetadataNotice(cmd *cobra.Command, pending *int64) error {
+	if pending == nil || *pending == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%d live files across this vault lack current metadata. PDF results may be incomplete.\n", *pending)
+	if err != nil {
+		return fmt.Errorf("writing source metadata coverage: %w", err)
+	}
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -34,7 +35,8 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint,
+			Photos:                    in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		})
 		if err != nil {
 			return nil, workspaceQueryError(err)

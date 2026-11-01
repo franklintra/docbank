@@ -22,7 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function start(withQuery = true) {
+function start(withQuery = true, pending?: number) {
   history.replaceState(
     null,
     "",
@@ -48,6 +48,7 @@ function start(withQuery = true) {
         JSON.stringify(
           await snapshotEnvelope(parseQuery(JSON.stringify(request.query)), [], {
             page_size: request.page_size,
+            source_metadata_pending: pending,
             facets: (request.facets ?? []).map((dimension: string) => ({
               dimension,
               available: true,
@@ -266,3 +267,16 @@ it("uses submitted top-bar text after repairing retained invalid filters", async
     filters: { size_min: 10 },
   });
 });
+
+it.each([12, 0, undefined])(
+  "shows pending metadata coverage with empty Query results: %s",
+  async (pending) => {
+    start(true, pending);
+    await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    await screen.findByText("No matching documents");
+    const notice = screen.queryByText(
+      "12 live files across this vault lack current metadata. PDF results may be incomplete.",
+    );
+    expect(Boolean(notice)).toBe(pending === 12);
+  },
+);

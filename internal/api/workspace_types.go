@@ -139,6 +139,8 @@ type WorkspaceQueryResponse struct {
 	ExpiresAt           time.Time                  `json:"expires_at" format:"date-time"`
 	PreviousCursor      string                     `json:"previous_cursor,omitempty" maxLength:"2048"`
 	NextCursor          string                     `json:"next_cursor,omitempty" maxLength:"2048"`
+
+	SourceMetadataPending *int64 `json:"source_metadata_pending,omitzero" minimum:"0" nullable:"false"`
 }
 
 type SavedQueryRunComparison struct {
@@ -177,7 +179,8 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
-		Query: QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
+		SourceMetadataPending: page.SourceMetadataPending,
+		Query:                 QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,
 		SnapshotFingerprint: page.SnapshotFingerprint,
 		Generation:          WorkspaceQueryGeneration{Kind: page.Generation.Kind, GenerationID: page.Generation.GenerationID},

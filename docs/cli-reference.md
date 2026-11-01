@@ -1023,8 +1023,8 @@ both are present, the lower bound must be earlier. Inputs are normalized to
 canonical UTC before the request.
 
 Use `--pdf-filter` for a Boolean expression over recorded PDF facts, such as
-`pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. See
-[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. For a full-vault review, wait until `extract:source-metadata` is idle in `docbank jobs`.
+`pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. PDF searches include `source_metadata_pending` in JSON, including zero. Human output warns when the count is positive; agent output adds `source_metadata_pending=N` to its header. The count covers live files across the vault, including files outside `--under`. See
+[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. Background extraction may still be recording facts after import or upgrade. A zero count establishes current extraction coverage; individual PDF facts may remain unknown.
 
 The query can be omitted for a bounded filter page when `--tag`,
 `--modified-since`, `--modified-before`, or `--pdf-filter` is supplied. These results are

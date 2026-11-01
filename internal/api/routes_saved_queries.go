@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -233,7 +234,8 @@ func registerSavedQueryRunRoute(
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, store.SnapshotRequest{
-			ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint,
+			ReplacesSnapshotID:        in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		}, g.mutate)
 		if err != nil {
 			return nil, workspaceQueryError(err)

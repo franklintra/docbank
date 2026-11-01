@@ -16,7 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -467,4 +469,61 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 	require.NoError(t, json.Unmarshal([]byte(body), &refreshedLast))
 	require.Len(t, refreshedLast.Rows, 1)
 	assert.Equal(t, last.CurrentVersionID, refreshedLast.Rows[0].ContentVersionID)
+}
+
+func TestPDFCoverageSnapshotsFreezeAndRefresh(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for i := range 51 {
+		createFileWithContent(t, ts, s, fmt.Sprintf("/%02d.txt", i), fmt.Sprintf("synthetic coverage %02d", i))
+	}
+	saved, err := s.CreateSavedQuery(t.Context(), "PDF review", "", store.SavedQueryKindQuery,
+		[]byte(`{"syntax":"advanced","text":"NOT pdf_has_javascript:true","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	for _, savedRun := range []bool{false, true} {
+		path, request := "/api/v1/workspace/queries", `{"query":{"syntax":"advanced","text":"saved:\"PDF review\""},"page_size":50}`
+		if savedRun {
+			path, request = "/api/v1/saved-queries/"+saved.ID+"/runs", `{"page_size":50}`
+		}
+		headers := map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}
+		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var first api.WorkspaceQueryResponse
+		if savedRun {
+			var run api.SavedQueryRunResult
+			require.NoError(t, json.Unmarshal([]byte(body), &run))
+			first = run.Snapshot
+		} else {
+			require.NoError(t, json.Unmarshal([]byte(body), &first))
+		}
+		require.NotNil(t, first.SourceMetadataPending)
+		assert.EqualValues(t, 51, *first.SourceMetadataPending)
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1})
+		require.NoError(t, err)
+		node, err := s.NodeByPath(t.Context(), "/00.txt")
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, processing.SourceMetadataExtractorFingerprint, canonical)
+		require.NoError(t, err)
+		response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries/"+first.SnapshotID+"/pages", headers, fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var last api.WorkspaceQueryResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &last))
+		require.Equal(t, first.SourceMetadataPending, last.SourceMetadataPending)
+		response, body = rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var refreshed api.WorkspaceQueryResponse
+		if savedRun {
+			var run api.SavedQueryRunResult
+			require.NoError(t, json.Unmarshal([]byte(body), &run))
+			refreshed = run.Snapshot
+		} else {
+			require.NoError(t, json.Unmarshal([]byte(body), &refreshed))
+		}
+		require.NotNil(t, refreshed.SourceMetadataPending)
+		assert.EqualValues(t, 50, *refreshed.SourceMetadataPending)
+		assert.Equal(t, first.MemberHash, refreshed.MemberHash)
+		// Restore pending coverage so both entry paths start from the same state.
+		_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, strings.Repeat("f", 64), canonical)
+		require.NoError(t, err)
+	}
 }

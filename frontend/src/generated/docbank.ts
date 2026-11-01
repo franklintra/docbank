@@ -8125,6 +8125,8 @@ export interface WorkspaceQueryResponse {
   /** @pattern ^[0-9a-f]{32}$ */
   snapshot_id: string;
   /** @minimum 0 */
+  source_metadata_pending?: number;
+  /** @minimum 0 */
   total: number;
   /** @minimum 0 */
   total_bytes: number;
@@ -8169,6 +8171,8 @@ export interface SearchReport {
   modified_before?: string;
   modified_since?: string;
   pdf_filter?: string;
+  /** @minimum 0 */
+  source_metadata_pending?: number;
   source_present?: boolean;
   tag_id?: string;
   truncated: boolean;

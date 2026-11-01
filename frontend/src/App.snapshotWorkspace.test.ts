@@ -60,6 +60,7 @@ function snapshot(
     page_size: 100,
     total,
     total_bytes: total * 2006,
+    source_metadata_pending: 12,
     rows,
     facets: [
       "collections",
@@ -240,6 +241,10 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await screen.findByText("Document 1 of 101");
+  await screen.findByText(
+    "12 live files across this vault lack current metadata. PDF results may be incomplete.",
+  );
+
   expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
   searchAction.mockClear();
   await waitFor(() => expect(highlightRequests).toBe(1));

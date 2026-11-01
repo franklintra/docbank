@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -403,6 +404,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
+		var pending *int64
+		if in.PDFFilter != "" {
+			count, countErr := d.Store.SourceMetadataPending(ctx, processing.SourceMetadataExtractorFingerprint)
+			if countErr != nil {
+				return nil, FromStoreError(countErr)
+			}
+			pending = &count
+		}
 		var hits []store.SearchHit
 		var truncated bool
 		var fuzzy *FuzzyReceipt
@@ -420,7 +429,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, FromStoreError(err)
 		}
 		out := &searchOutput{Body: SearchReport{
-			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
+			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy, SourceMetadataPending: pending,
 			PDFFilter: in.PDFFilter, SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
