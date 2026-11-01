@@ -347,3 +347,42 @@ func TestSearchCLIAgentAndExplicitLexicalFilters(t *testing.T) {
 	assert.Contains(t, out, "fuzzy=complete")
 	assert.Contains(t, out, "match=fuzzy_name path=/docs/query-words.txt")
 }
+
+func TestPDFFilterCLIRequestAndEcho(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Cleanup(func() { resetFlags(rootCmd) })
+	const filter = "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"
+	var record kitdaemon.RuntimeRecord
+	var profileCalls, scopeCalls, searchCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &scopeCalls, &searchCalls)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
+			requests++
+			assert.Equal(t, filter, r.URL.Query().Get("pdf_filter"))
+			assert.Empty(t, r.URL.Query().Get("q"))
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{PDFFilter: filter, SourceMetadataPending: new(int64(2)), Limit: 50, Hits: []api.SearchHit{
+				{Node: api.Node{ID: 42, Kind: "file", Name: "evidence.pdf"}, Path: "/evidence.pdf", Match: "filter"},
+			}}))
+			return
+		}
+		handshake(w, r)
+	}))
+	t.Cleanup(server.Close)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	output, err := runCLI(t, "search", "--pdf-filter", filter, "--json")
+	require.NoError(t, err)
+	var report api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(output), &report))
+	assert.Equal(t, filter, report.PDFFilter)
+	require.NotNil(t, report.SourceMetadataPending)
+	assert.EqualValues(t, 2, *report.SourceMetadataPending)
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, "/evidence.pdf", report.Hits[0].Path)
+	assert.Equal(t, 1, requests)
+	assert.Zero(t, profileCalls)
+	assert.Zero(t, scopeCalls)
+}

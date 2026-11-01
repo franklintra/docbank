@@ -13,6 +13,7 @@ import (
 
 	modernsqlite "modernc.org/sqlite"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -53,6 +54,22 @@ func init() {
 				return key, nil
 			}
 			return nil, nil //nolint:nilnil // SQL NULL marks a photo with no folder.
+		})
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_source_metadata_json_v1", 3,
+		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			var encoded []byte
+			switch value := args[0].(type) {
+			case []byte:
+				encoded = value
+			case string:
+				encoded = []byte(value)
+			}
+			contract, _ := args[1].(string)
+			checksum, _ := args[2].(string)
+			if _, err := document.DecodeSourceMetadataGenerationV1(encoded, contract, checksum); err != nil {
+				return nil, nil //nolint:nilerr,nilnil // Invalid derived evidence becomes SQL NULL instead of a query error.
+			}
+			return string(encoded), nil
 		})
 }
 

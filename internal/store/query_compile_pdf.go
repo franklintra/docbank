@@ -28,7 +28,7 @@ func compilePDFPredicate(field, value string, start, end int) (compiledQueryFrag
 	return compiledQueryFragment{
 		sql: `EXISTS (SELECT 1 FROM source_metadata_heads head
    JOIN source_metadata_generations generation ON generation.generation_id=head.generation_id,
-   json_each(generation.canonical_json, '$.fields') fact
+   json_each(docbank_source_metadata_json_v1(generation.canonical_json,generation.contract_version,generation.checksum), '$.fields') fact
    WHERE head.source_sha256=cv.blob_hash
    AND json_extract(fact.value, '$.key')=?
    AND json_extract(fact.value, '$.namespace')='pdf.info'

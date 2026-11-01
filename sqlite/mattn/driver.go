@@ -15,6 +15,7 @@ import (
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -37,6 +38,14 @@ func init() {
 			return nil
 		}, true); err != nil {
 			return fmt.Errorf("register photo folder function: %w", err)
+		}
+		if err := conn.RegisterFunc("docbank_source_metadata_json_v1", func(encoded []byte, contract, checksum string) any {
+			if _, err := document.DecodeSourceMetadataGenerationV1(encoded, contract, checksum); err != nil {
+				return nil
+			}
+			return string(encoded)
+		}, true); err != nil {
+			return fmt.Errorf("register source metadata function: %w", err)
 		}
 		return nil
 	}})

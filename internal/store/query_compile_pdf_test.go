@@ -1,12 +1,17 @@
 package store
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
@@ -177,4 +182,66 @@ func TestSourceMetadataPendingCountsCurrentLiveNodes(t *testing.T) {
 	count, err = s.SourceMetadataPending(ctx, fakeHash("f1"))
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count, "a historical generation cannot cover the active head")
+}
+
+func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
+	t.Parallel()
+	for _, adapter := range []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}},
+	} {
+		for _, damage := range []string{"checksum", "noncanonical", "malformed", "unknown contract", "unknown payload contract"} {
+			t.Run(adapter.name+"/"+damage, func(t *testing.T) {
+				s, err := Open(filepath.Join(t.TempDir(), "evidence.db"), adapter.driver)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, s.Close()) }()
+				ctx := t.Context()
+				node, err := s.CreateFile(ctx, s.RootID(), "evidence.pdf", fakeHash("a1"), 12, "application/pdf")
+				require.NoError(t, err)
+				canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
+					Fields: []document.SourceMetadataFieldV1{{Key: "pdf.info.has_javascript", Namespace: "pdf.info", SourceField: "has_javascript", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}}}})
+				require.NoError(t, err)
+				_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+				require.NoError(t, err)
+				hits, _, err := s.SearchPageWithOptions(ctx, "", 50, SearchOptions{PDFFilter: "pdf_has_javascript:true"})
+				require.NoError(t, err)
+				require.Len(t, hits, 1)
+				pending, err := s.SourceMetadataPending(ctx, fakeHash("f1"))
+				require.NoError(t, err)
+				require.Zero(t, pending)
+				_, err = s.db.ExecContext(ctx, `DROP TRIGGER source_metadata_generations_immutable_update`)
+				require.NoError(t, err)
+				switch damage {
+				case "checksum":
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET checksum=?`, fakeHash("bad"))
+				case "noncanonical":
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?`, append([]byte(" "), canonical...))
+				case "malformed":
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?`, []byte(`{`))
+				case "unknown contract":
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET contract_version='source-metadata/v2'`)
+				case "unknown payload contract":
+					unknown := []byte(strings.ReplaceAll(string(canonical), "source-metadata/v1", "source-metadata/v2"))
+					// Keep the checksum valid to isolate contract validation.
+					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?,checksum=?`, unknown, fmt.Sprintf("%x", sha256.Sum256(unknown)))
+				}
+				require.NoError(t, err)
+				_, _, err = s.ActiveSourceMetadata(ctx, node.BlobHash)
+				require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
+				hits, _, err = s.SearchPageWithOptions(ctx, "", 50, SearchOptions{PDFFilter: "pdf_has_javascript:true"})
+				require.NoError(t, err)
+				assert.Empty(t, hits)
+				snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: compilerQuery(t, "pdf_has_javascript:true"), SourceMetadataFingerprint: fakeHash("f1")})
+				require.NoError(t, err)
+				assert.Zero(t, snapshot.Total)
+				require.NotNil(t, snapshot.SourceMetadataPending)
+				assert.EqualValues(t, 1, *snapshot.SourceMetadataPending)
+				pending, err = s.SourceMetadataPending(ctx, fakeHash("f1"))
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, pending)
+			})
+		}
+	}
 }

@@ -192,8 +192,8 @@ func activeSourceMetadata(
 	if err != nil {
 		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, fmt.Errorf("reading active source metadata: %w", err)
 	}
-	metadata, checksum, err := document.DecodeSourceMetadataV1(generation.CanonicalJSON)
-	if err != nil || checksum != generation.Checksum {
+	metadata, err := document.DecodeSourceMetadataGenerationV1(generation.CanonicalJSON, generation.ContractVersion, generation.Checksum)
+	if err != nil {
 		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, fmt.Errorf(
 			"source metadata generation %s: %w", generation.GenerationID, ErrSourceMetadataCorrupt)
 	}
@@ -370,7 +370,8 @@ func sourceMetadataPending(ctx context.Context, q metadataQuerier, fingerprint s
  WHERE n.kind='file' AND n.trashed_at IS NULL AND NOT EXISTS (
  SELECT 1 FROM source_metadata_heads h
  JOIN source_metadata_generations g ON g.generation_id=h.generation_id
- WHERE h.source_sha256=cv.blob_hash AND g.contract_version=? AND g.extractor_fingerprint=?)`,
+ WHERE h.source_sha256=cv.blob_hash AND g.contract_version=? AND g.extractor_fingerprint=?
+ AND docbank_source_metadata_json_v1(g.canonical_json,g.contract_version,g.checksum) IS NOT NULL)`,
 		document.SourceMetadataContractV1, fingerprint).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("counting pending source metadata: %w", err)
