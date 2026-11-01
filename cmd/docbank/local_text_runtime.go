@@ -72,9 +72,12 @@ func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bo
 	managed, rebuild := false, false
 	textBindings := 0
 	for _, binding := range profile.Embeddings {
-		original, err := cfg.EmbeddingProfile(binding)
-		if err != nil {
-			return cfg, false, false, err
+		original, exists := cfg.EmbeddingProfiles[binding]
+		if !exists || original.Embedder != nil {
+			original, err = cfg.EmbeddingProfile(binding)
+			if err != nil {
+				return cfg, false, false, err
+			}
 		}
 		if original.InputKind != "rendition_chunk" {
 			continue
@@ -87,16 +90,14 @@ func localTextCandidate(cfg config.Config, name, mode string) (config.Config, bo
 			continue
 		}
 		next := original
-		if original.Model != "nomic-embed-text" {
-			next = fallback.EmbeddingProfiles[config.LocalTextProfile]
+		builtin := fallback.EmbeddingProfiles[config.LocalTextProfile]
+		if original.Model != builtin.Model || original.Dimensions != builtin.Dimensions || original.Runtime.ModelRevision != builtin.Runtime.ModelRevision {
+			next = builtin
 			next.Activation = original.Activation
 			rebuild = true
 		}
 		if next.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" {
 			return cfg, false, false, fmt.Errorf("%w: profile %q requires an OpenAI-compatible Nomic runtime; choose --profile local-text", processing.ErrLocalTextConfiguration, name)
-		}
-		if next.Dimensions != 768 {
-			return cfg, false, false, fmt.Errorf("%w: profile %q requires Nomic with 768 dimensions; choose --profile local-text or configure 768 dimensions", processing.ErrLocalTextConfiguration, name)
 		}
 		next.Runtime = new(*next.Runtime)
 		next.Runtime.Managed, next.Runtime.ServerMode = true, mode
@@ -120,7 +121,7 @@ func defaultLocalTextProfile(cfg config.Config) string {
 		for _, binding := range p.Embeddings {
 			e, err := cfg.EmbeddingProfile(binding)
 			if err == nil && e.Runtime != nil && e.InputKind == "rendition_chunk" && e.Model == "nomic-embed-text" && e.Dimensions == 768 {
-				if _, _, _, err := localTextCandidate(cfg, name, "local"); err == nil {
+				if _, _, rebuild, err := localTextCandidate(cfg, name, "local"); err == nil && !rebuild {
 					return name
 				}
 			}

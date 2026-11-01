@@ -51,9 +51,12 @@ type LocalTextSetup struct {
 	Save           func(string, string) error
 	mu             sync.Mutex
 	// The backfill lane owns these across its sequential list/process pages.
-	skips      map[localTextSkipKey]*localTextSkip
-	skipWarned bool
-	logger     *slog.Logger
+	skips              map[localTextSkipKey]*localTextSkip
+	skipWarned         bool
+	logger             *slog.Logger
+	dirtySpaces        map[string]struct{}
+	lastIndexBuild     time.Time
+	indexBuildDuration time.Duration
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (LocalTextPlan, *Service, error) {
@@ -82,7 +85,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, name, mode string) (Loc
 		Managed: managed, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
 		VectorEffect: "reuse matching vectors; embed missing inputs"}
 	if rebuild {
-		plan.VectorEffect = "switching to Nomic uses a new vector space and rebuilds the index"
+		plan.VectorEffect = "switching to Kit-managed Nomic v1.5 uses a new vector space and rebuilds the index"
 	}
 	for _, binding := range profile.portable.Embeddings {
 		plan.Models = append(plan.Models, binding.Model)
@@ -147,21 +150,9 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 	var passwordHash [sha256.Size]byte
 	var passwordsChecked, passwordsValid bool
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), limit-len(result))
+		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), 1000)
 		if err != nil {
 			return nil, err
-		}
-		if len(items) == 0 {
-			if len(result) == 0 {
-				for key, skip := range setup.skips {
-					if !skip.seen {
-						delete(setup.skips, key)
-					} else {
-						skip.seen = false
-					}
-				}
-			}
-			break
 		}
 		for _, item := range items {
 			key := localTextSkipKey{item.ContentVersionID, item.Name}
@@ -177,6 +168,24 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 				delete(setup.skips, key)
 			}
 			result = append(result, item)
+			if len(result) == limit {
+				return result, nil
+			}
+		}
+		if len(items) < 1000 {
+			if len(result) == 0 {
+				for key, skip := range setup.skips {
+					if !skip.seen {
+						delete(setup.skips, key)
+					} else {
+						skip.seen = false
+					}
+				}
+				if err := setup.rebuildDirty(ctx, true); err != nil {
+					return nil, err
+				}
+			}
+			return result, nil
 		}
 		after = items[len(items)-1].ContentVersionID
 	}
@@ -216,11 +225,48 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 		}
 		return nil
 	}
-	_, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
+		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
 	if errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrPlanChanged) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	for _, id := range job.EmbeddingJobIDs {
+		status, statusErr := setup.Service.catalog.EmbeddingJobByID(ctx, id)
+		if statusErr != nil {
+			return statusErr
+		}
+		if status.State == "completed" {
+			if setup.dirtySpaces == nil {
+				setup.dirtySpaces = make(map[string]struct{})
+			}
+			setup.dirtySpaces[profile.vectorSpaces[status.BindingID]] = struct{}{}
+		}
+		if status.FailureCode == store.EmbeddingFailureProviderUnavailable {
+			err = errors.New("local text embedding provider unavailable")
+		}
+	}
+	return errors.Join(err, setup.rebuildDirty(ctx, false))
+}
+
+func (setup *LocalTextSetup) rebuildDirty(ctx context.Context, idle bool) error {
+	if len(setup.dirtySpaces) == 0 || (!idle && !setup.lastIndexBuild.IsZero() && setup.Service.clock().Sub(setup.lastIndexBuild) < 4*setup.indexBuildDuration) {
+		return nil
+	}
+	spaces := make([]string, 0, len(setup.dirtySpaces))
+	for space := range setup.dirtySpaces {
+		spaces = append(spaces, space)
+	}
+	started := setup.Service.clock()
+	if err := setup.Service.rebuildVectorSpaces(ctx, spaces); err != nil {
+		return err
+	}
+	setup.lastIndexBuild = setup.Service.clock()
+	setup.indexBuildDuration = setup.lastIndexBuild.Sub(started)
+	clear(setup.dirtySpaces)
+	return nil
 }
 
 func localTextPasswordHash(profile configuredProfile) ([sha256.Size]byte, bool) {

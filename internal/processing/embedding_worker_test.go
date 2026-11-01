@@ -1088,17 +1088,17 @@ func headKeyParts(version, binding string, kind document.EmbeddingInputKind) str
 func workerHash(value string) string { return workerHashBytes([]byte(value)) }
 func workerHex(value string) string  { return workerHash(value) }
 
-func embeddingWorkerDescriptor(t *testing.T) document.EmbeddingDescriptor {
-	t.Helper()
+func embeddingWorkerDescriptor(tb testing.TB) document.EmbeddingDescriptor {
+	tb.Helper()
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: workerHash("policy"), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "synthetic", ModelRevision: "v1", Dimension: 2, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, ScalarEncoding: "float32", DocumentFormatter: "document/v1", QueryFormatter: "query/v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk}, CompatibilityID: "synthetic-space", SupportsTextQuery: true, ModelInput: contract, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return descriptor
 }
 
-func embeddingWorkerProfile(t *testing.T, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
-	t.Helper()
+func embeddingWorkerProfile(tb testing.TB, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
+	tb.Helper()
 	makeBinding := func(name string, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{Activation: document.EmbeddingOptional, AuthorizationFingerprint: workerHash("auth"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: workerHash("disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: kind, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, ModelInput: descriptor.ModelInput, Model: descriptor.Model, Name: name, Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}
 		if kind == document.EmbeddingInputRenditionChunk {
@@ -1116,7 +1116,7 @@ func embeddingWorkerProfile(t *testing.T, descriptor document.EmbeddingDescripto
 			TrustBoundary: "local_process", UploadOptionsFingerprint: workerHash("upload-options")},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxDocumentChars: 10000, CompletenessFingerprint: workerHash("complete"), LexicalSegmenterFingerprint: workerHash("lexical"), MaxSegmentRunes: 1000, MaxUnitRunes: 1000, NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, NormalizerFingerprint: workerHash("normalizer"), RenditionContract: document.RenditionContractV1, SanitizerFingerprint: workerHash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1}, RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: workerHash("attachment"), ConsentFingerprint: workerHash("consent"), TrustBoundary: string(document.EmbeddingTrustLocalProcess)}, Retrieval: document.RetrievalPolicyV1{LexicalLimit: 10, VectorLimit: 10}, Embeddings: []document.EmbeddingBindingV1{makeBinding("chunk", document.EmbeddingInputRenditionChunk), makeBinding("direct", document.EmbeddingInputOriginalFile)}}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.ProcessingProfileRecord{Fingerprint: fingerprints.Profile, CanonicalProfile: canonical, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical, RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure, AttachmentPolicyFingerprint: profile.RetentionDisclosure.AttachmentPolicyFingerprint, ConsentFingerprint: profile.RetentionDisclosure.ConsentFingerprint, TrustBoundary: profile.RetentionDisclosure.TrustBoundary}
 }
 

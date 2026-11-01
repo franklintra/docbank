@@ -196,6 +196,28 @@ func TestLocalTextSwitchReusesExistingInputsAndIndexesOnlyNewText(t *testing.T) 
 	require.NoError(t, err)
 	third, err := catalog.CreateFile(t.Context(), catalog.RootID(), "third.txt", receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize})
 	require.NoError(t, err)
+	// Restore the saved choice after its configured disclosure changes, as the daemon does.
+	require.NoError(t, service.Shutdown(t.Context()))
+	changed := cfg.ProcessingProfiles["archive"]
+	changed.ConsentFingerprint = sha256Hex("changed archive consent")
+	cfg.ProcessingProfiles["archive"] = changed
+	restored, _, _, err := localTextCandidate(cfg, choice.Profile, choice.Server)
+	require.NoError(t, err)
+	restoredBundle, err := configureEmbeddingRuntimeBundle(restored, blobs, layout.BlobTmpDir())
+	require.NoError(t, err)
+	restoredProfiles, err := executableProcessingProfiles(restored, restoredBundle)
+	require.NoError(t, err)
+	_, err = projectLocalTextProfile(cfg, profiles, restored, choice.Profile, restoredProfiles[choice.Profile])
+	require.NoError(t, err)
+	service, err = processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: layout.BlobTmpDir()})
+	require.NoError(t, err)
+	selector = processing.Selector{Profile: "archive", NodeID: third.ID, ContentVersionID: third.CurrentVersionID}
+	plan, err = service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.True(t, plan.ConsentRequired, "the previous profile grant cannot approve a changed saved profile")
+	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.ErrorIs(t, err, processing.ErrConsentRequired)
+	require.Equal(t, int64(1), localCalls.Load())
 	_, err = service.RevokeConsent(t.Context())
 	require.NoError(t, err)
 	selector = processing.Selector{Profile: "archive", NodeID: third.ID, ContentVersionID: third.CurrentVersionID}

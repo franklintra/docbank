@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/embedlocal"
 )
 
@@ -107,15 +106,16 @@ func TestLocalTextCandidatePreservesOtherProvidersAndValidatesManagedModel(t *te
 	}
 	cfg, err = config.Default().WithLocalText()
 	require.NoError(t, err)
-	e := cfg.EmbeddingProfiles[config.LocalTextProfile]
-	e.Dimensions = 512
-	e.Runtime.Managed = false
-	cfg.EmbeddingProfiles[config.LocalTextProfile] = e
-	_, managed, rebuild, err = localTextCandidate(cfg, config.LocalTextProfile, "local")
-	require.False(t, managed)
-	require.False(t, rebuild)
-	require.ErrorIs(t, err, processing.ErrLocalTextConfiguration)
-	require.ErrorContains(t, err, "configure 768 dimensions")
+	for _, managedBefore := range []bool{false, true} {
+		e := cfg.EmbeddingProfiles[config.LocalTextProfile]
+		e.Dimensions = 512
+		e.Runtime.Managed = managedBefore
+		cfg.EmbeddingProfiles[config.LocalTextProfile] = e
+		_, managed, rebuild, err = localTextCandidate(cfg, config.LocalTextProfile, "local")
+		require.NoError(t, err)
+		require.True(t, managed)
+		require.True(t, rebuild)
+	}
 }
 
 func TestLocalTextSelectionFormat(t *testing.T) {
@@ -160,7 +160,7 @@ func TestLocalTextDefaultSelectsNomic(t *testing.T) {
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
-	for _, scenario := range []string{"missing_profile", "malformed", "newer", "dimensions"} {
+	for _, scenario := range []string{"missing_profile", "malformed", "newer", "no_text"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("DOCBANK_HOME", root)
@@ -171,11 +171,13 @@ func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
 				data = []byte(`{"version":1`)
 			case "newer":
 				data = []byte(`{"version":2,"profile":"local-text","server":"local"}`)
-			case "dimensions":
+			case "no_text":
 				cfg, err := config.Default().WithLocalText()
 				require.NoError(t, err)
 				e := cfg.EmbeddingProfiles[config.LocalTextProfile]
-				e.Dimensions = 512
+				profile := cfg.ProcessingProfiles[config.LocalTextProfile]
+				profile.Embeddings = nil
+				cfg.ProcessingProfiles[config.LocalTextProfile] = profile
 				e.Runtime.Managed = false
 				e.Runtime.ProviderEgressConfig = config.ProviderEgressConfig{Endpoint: "http://127.0.0.1:11434", AllowedCIDRs: []string{"127.0.0.0/8"},
 					ProxyMode: "disabled", ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second), TLSHandshakeTimeout: config.Duration(time.Second)}
@@ -233,6 +235,42 @@ max_request_bytes = 2097152
 			saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
 			require.NoError(t, err)
 			require.Equal(t, data, saved)
+		})
+	}
+}
+
+func TestLocalTextNomicRevisionControlsReuseAndDefault(t *testing.T) {
+	t.Parallel()
+	for _, revision := range []string{"nomic-embed-text-v1", "nomic-embed-text-v1.5"} {
+		t.Run(revision, func(t *testing.T) {
+			cfg, err := config.Default().WithLocalText()
+			require.NoError(t, err)
+			cfg.ProcessingProfiles["archive"] = cfg.ProcessingProfiles[config.LocalTextProfile]
+			delete(cfg.ProcessingProfiles, config.LocalTextProfile)
+			e := cfg.EmbeddingProfiles[config.LocalTextProfile]
+			e.Runtime.ModelRevision, e.Runtime.DeploymentEpoch = revision, revision
+			cfg.EmbeddingProfiles[config.LocalTextProfile] = e
+			candidate, managed, rebuild, err := localTextCandidate(cfg, "archive", "local")
+			require.NoError(t, err)
+			require.True(t, managed)
+			require.Equal(t, revision != "nomic-embed-text-v1.5", rebuild)
+			require.Equal(t, "nomic-embed-text-v1.5", candidate.EmbeddingProfiles[config.LocalTextProfile].Runtime.ModelRevision)
+			var identities []string
+			for _, current := range []config.Config{cfg, candidate} {
+				profile, err := config.ManagedEmbeddingProfile(current.EmbeddingProfiles[config.LocalTextProfile], nil)
+				require.NoError(t, err)
+				provider, err := openaicompat.New(profile, nil, &http.Client{})
+				require.NoError(t, err)
+				identity, err := provider.VectorIdentity()
+				require.NoError(t, err)
+				identities = append(identities, identity)
+			}
+			require.Equal(t, !rebuild, identities[0] == identities[1])
+			if rebuild {
+				require.Equal(t, "local-text", defaultLocalTextProfile(cfg))
+			} else {
+				require.Equal(t, "archive", defaultLocalTextProfile(cfg))
+			}
 		})
 	}
 }

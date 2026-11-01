@@ -247,7 +247,10 @@ type Plan struct {
 	RenditionIneligibleReason string `json:",omitzero"`
 }
 
+type processingRunOptions struct{ retryUnavailable, deferIndex bool }
+
 type StartRequest struct {
+	runOptions      processingRunOptions
 	Selector        Selector
 	PlanFingerprint string
 	Consent         bool
@@ -930,7 +933,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 				ProfileFingerprint: profile.record.Fingerprint, ContentVersionID: version.ID})
 		}
 	}
-	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress)
+	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress, request.runOptions)
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
 	}
@@ -1670,7 +1673,7 @@ func (service *Service) prepareSearch(
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
-	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
+	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string), options processingRunOptions,
 ) ([]string, error) {
 	if len(profile.portable.Embeddings) == 0 {
 		return []string{}, nil
@@ -1718,7 +1721,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			job, err = service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
 				ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
 				VectorSpaceID: profile.vectorSpaces[binding.Name], Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
-				Authorization: authorization,
+				Authorization: authorization, RetryUnavailable: options.retryUnavailable,
 			})
 			return err
 		})
@@ -1790,9 +1793,13 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			}
 		}
 	}
-	if len(vectorSpaces) == 0 {
+	if len(vectorSpaces) == 0 || options.deferIndex {
 		return jobIDs, nil
 	}
+	return jobIDs, service.rebuildVectorSpaces(ctx, vectorSpaces)
+}
+
+func (service *Service) rebuildVectorSpaces(ctx context.Context, vectorSpaces []string) error {
 	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: service.catalog,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return service.catalog.ReadVectorIndexVectorSet(ctx, service.blobs, member)
@@ -1800,7 +1807,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		Mutate: service.gate.MutateContext, Owner: "embedded-index-worker", BuildLease: 5 * time.Minute,
 		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
-		return jobIDs, err
+		return err
 	}
 	for _, vectorSpace := range sortedUnique(vectorSpaces) {
 		for {
@@ -1809,17 +1816,17 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				errors.Is(err, store.ErrVectorIndexSourceStale) {
 				// Another request can publish embeddings while this index builds.
 				if err := jobs.Wait(ctx, 100*time.Millisecond); err != nil {
-					return jobIDs, err
+					return err
 				}
 				continue
 			}
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return jobIDs, err
+				return err
 			}
 			break
 		}
 	}
-	return jobIDs, nil
+	return nil
 }
 
 // renditionEvidence reads a build's normalized evidence and proves it is the
