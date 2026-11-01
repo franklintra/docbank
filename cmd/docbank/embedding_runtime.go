@@ -113,9 +113,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		switch configured.Runtime.AdapterContract {
 		case openAIEmbeddingAdapter:
 			if config.ManagedEmbedding(configured) {
-				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) {
-					return localEmbeddingOrigin(ctx, configured.Runtime.ServerMode)
-				})
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, localEmbeddingOrigin)
 				if profileErr != nil {
 					return bundle, profileErr
 				}
@@ -424,8 +422,8 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 	return processing.EmbeddingProviderPermanent, 0
 }
 
-func localEmbeddingOrigin(ctx context.Context, mode string) (string, error) {
-	opts := embedlocal.Options{SkipOllama: mode == "local"}
+func localEmbeddingOrigin(ctx context.Context) (string, error) {
+	opts := embedlocal.Options{SkipOllama: true}
 	origin, err := embedlocal.Endpoint(ctx, opts)
 	if err == nil {
 		return strings.TrimSuffix(origin, "/v1"), nil

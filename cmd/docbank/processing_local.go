@@ -37,7 +37,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err := writeLocalTextPlan(cmd, *plan); err != nil {
 				return err
 			}
-			if err := approveLocalText(cmd, plan.Managed, plan.Server); err != nil {
+			if err := approveLocalText(cmd, plan.Managed); err != nil {
 				return err
 			}
 			_, err = c.API().ApplyLocalText(cmd.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{
@@ -83,11 +83,11 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 
 // approveLocalText uses Kit's single pre-download callback. An offline reuse
 // still needs the same explicit vault-wide approval before startup or writes.
-func approveLocalText(cmd *cobra.Command, managed bool, server string) error {
-	return approveLocalTextWithRuntime(cmd, managed, server, embedlocal.Endpoint, embedlocal.Install)
+func approveLocalText(cmd *cobra.Command, managed bool) error {
+	return approveLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool, server string,
+func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
@@ -110,7 +110,7 @@ func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool, server string
 		return true, nil
 	}
 	if managed {
-		_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: server == "local"})
+		_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
 		if errors.Is(err, embedlocal.ErrNotFound) {
 			dir, err := embedlocal.DefaultDir()
 			if err != nil {

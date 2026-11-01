@@ -29,7 +29,7 @@ The command previews the built-in `local-text` profile, model, server, and missi
 
 Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
 
-Choose `--server auto` to prefer a running Ollama before the shared server. Choose `--server local` to use the shared `kennembed` server. Downloads use Kit's shared installation and require approval before network access. An already installed server still requires approval, with a zero-byte download shown. The daemon's changing loopback port keeps the same consent grant.
+Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. Downloads use Kit's shared installation and require approval before network access. An already installed server still requires approval, with a zero-byte download shown. The daemon's changing loopback port keeps the same consent grant.
 
 Declining, cancellation before apply, and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server after approval; API apply requires a ready server. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. Setup restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
 

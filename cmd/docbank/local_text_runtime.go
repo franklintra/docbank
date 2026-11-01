@@ -63,11 +63,11 @@ func localTextCandidate(cfg config.Config, mode string) (config.Config, error) {
 	return cfg, nil
 }
 
-func localTextStartup(ctx context.Context, managed bool, mode string) error {
+func localTextStartup(ctx context.Context, managed bool, _ string) error {
 	if !managed {
 		return nil
 	}
-	_, err := localEmbeddingOrigin(ctx, mode)
+	_, err := localEmbeddingOrigin(ctx)
 	if err != nil {
 		return fmt.Errorf("embeddings server is not ready; run docbank processing local to install and start it: %w", err)
 	}

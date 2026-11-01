@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestMissingProcessingTargetsPagesCurrentLiveVersions(t *testing.T) {
@@ -53,4 +54,17 @@ func checkMissingProcessingTargets(t *testing.T, s *Store) {
 	require.NoError(t, err)
 	require.Equal(t, "renamed.pdf", last[0].Name)
 	require.Equal(t, node.CurrentVersionID, last[0].ContentVersionID)
+	key := EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: "local-text", InputKind: document.EmbeddingInputRenditionChunk}
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO derivative_purge_suppressions(source_sha256,profile_fingerprint,build_id,purged_at,active) VALUES($1,$2,$3,$4,1)`, fakeHash("a1"), derivativeBuildSuppressionProfile, embeddingPurgeScope(key, fakeHash("f1")), "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	suppressed, err := s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f1"), []EmbeddingHeadKey{key})
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{node.CurrentVersionID: true}, suppressed)
+	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f2"), []EmbeddingHeadKey{key})
+	require.NoError(t, err)
+	require.Empty(t, suppressed, "another profile has its own suppression identity")
+	require.NoError(t, s.AuthorizeEmbeddingRebuild(t.Context(), EmbeddingRebuildAuthorization{Key: key, ProcessingProfileFingerprint: fakeHash("f1"), SetID: fakeHash("f3"), AuthorizedAt: "2026-01-02T00:00:00.000000000Z"}))
+	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f1"), []EmbeddingHeadKey{key})
+	require.NoError(t, err)
+	require.Empty(t, suppressed)
 }

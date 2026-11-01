@@ -139,7 +139,20 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 		if err != nil {
 			return nil, err
 		}
+		keys := make([]store.EmbeddingHeadKey, 0, len(items)*len(profile.portable.Embeddings))
 		for _, item := range items {
+			for _, binding := range profile.portable.Embeddings {
+				keys = append(keys, store.EmbeddingHeadKey{ContentVersionID: item.ContentVersionID, BindingID: binding.Name, InputKind: binding.InputKind})
+			}
+		}
+		suppressed, err := setup.Service.catalog.EmbeddingPurgeSuppressedVersions(ctx, profile.record.Fingerprint, keys)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if suppressed[item.ContentVersionID] {
+				continue
+			}
 			key := localTextSkipKey{item.ContentVersionID, item.Name}
 			if skip, ok := setup.skips[key]; ok {
 				skip.seen = true
@@ -182,6 +195,10 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 	}
 	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
 		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
+	if errors.Is(err, document.ErrTokenizerLimit) {
+		setup.skip(item, "tokenizer_limit")
+		return nil
+	}
 	if errors.Is(err, ErrRenditionFailed) {
 		setup.skip(item, "rendition_failed")
 		return nil
@@ -232,6 +249,35 @@ func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 	}
 }
 
+// publicationPending compares the publisher's active manifest with current
+// membership. The recurring daemon index worker owns the rebuild itself.
+func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, error) {
+	profile, ok := setup.Service.profiles[setup.Selected]
+	if !ok {
+		return false, nil
+	}
+	for _, space := range profile.vectorSpaces {
+		source, err := setup.Service.catalog.CaptureVectorIndexSource(ctx, space)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		head, err := setup.Service.catalog.ActiveVectorIndexHead(ctx, space)
+		if errors.Is(err, store.ErrNotFound) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if head.SourceManifestChecksum != source.ManifestChecksum {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) error {
 	setup.logger = logger
 	holding := false
@@ -247,12 +293,16 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 			items, err := setup.targets(ctx, after, limit)
-			if len(items) > 0 && !holding {
+			pending := len(items) > 0
+			if err == nil && after == "" && !pending {
+				pending, err = setup.publicationPending(ctx)
+			}
+			if pending && !holding {
 				holding = true
 				if setup.ActivityBegin != nil {
 					setup.ActivityBegin()
 				}
-			} else if err == nil && after == "" && len(items) == 0 {
+			} else if err == nil && after == "" && !pending {
 				release()
 			}
 			return items, err

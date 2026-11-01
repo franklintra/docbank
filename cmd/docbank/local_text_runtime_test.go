@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -32,17 +35,17 @@ import (
 func TestLocalTextApproval(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, answer, mode   string
+		name, answer         string
 		ready                bool
 		missingBytes         int64
 		downloaded           bool
 		wantError, bytesLine string
 	}{
-		{"installed_decline", "n\n", "local", false, 0, false, "declined", "missing download: 0 bytes"},
-		{"installed_approve", "y\n", "local", false, 0, false, "", "missing download: 0 bytes"},
-		{"missing_decline", "n\n", "local", false, 295000000, false, "declined", "missing download: 295000000 bytes"},
-		{"missing_approve", "y\n", "local", false, 295000000, true, "", "missing download: 295000000 bytes"},
-		{"auto_ollama", "y\n", "auto", true, 0, false, "", "missing download: 0 bytes"},
+		{"installed_decline", "n\n", false, 0, false, "declined", "missing download: 0 bytes"},
+		{"installed_approve", "y\n", false, 0, false, "", "missing download: 0 bytes"},
+		{"missing_decline", "n\n", false, 295000000, false, "declined", "missing download: 295000000 bytes"},
+		{"missing_approve", "y\n", false, 295000000, true, "", "missing download: 295000000 bytes"},
+		{"ready_approve", "y\n", true, 0, false, "", "missing download: 0 bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
@@ -51,8 +54,8 @@ func TestLocalTextApproval(t *testing.T) {
 			output := new(bytes.Buffer)
 			cmd.SetOut(output)
 			downloaded := false
-			err := approveLocalTextWithRuntime(cmd, true, tc.mode, func(_ context.Context, opts embedlocal.Options) (string, error) {
-				require.Equal(t, tc.mode == "local", opts.SkipOllama)
+			err := approveLocalTextWithRuntime(cmd, true, func(_ context.Context, opts embedlocal.Options) (string, error) {
+				require.True(t, opts.SkipOllama)
 
 				if tc.ready {
 					return "http://127.0.0.1:11434/v1", nil
@@ -233,14 +236,31 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found, "the daemon remains discoverable during an embedding request")
 			releaseRequest()
+			catalog, err := store.Open(layout.DBPath())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			if !result.invalid {
+				require.Eventually(t, func() bool {
+					spaces, err := catalog.ListVectorIndexSpaces(t.Context())
+					if err != nil || len(spaces) != 1 {
+						return false
+					}
+					source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
+					if err != nil || len(source.Members) == 0 {
+						return false
+					}
+					generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
+					return err == nil && generation.SourceManifestChecksum == source.ManifestChecksum && generation.RowCount > 0
+				}, 5*time.Second, 10*time.Millisecond, "completed embeddings become search-visible before idle shutdown")
+				records, err := daemonconn.RuntimeStore(root).List()
+				require.NoError(t, err)
+				require.Len(t, records, 1, "the daemon stays discoverable through vector publication")
+			}
 			require.Eventually(t, func() bool {
 				records, err := daemonconn.RuntimeStore(root).List()
 				return err == nil && len(records) == 0
 			}, 8*time.Second, 20*time.Millisecond)
 			stop()
-			catalog, err := store.Open(layout.DBPath())
-			require.NoError(t, err)
-			defer func() { require.NoError(t, catalog.Close()) }()
 			jobs, err := catalog.EmbeddingJobsForVersionProfile(t.Context(), version, profileFingerprint)
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
@@ -252,4 +272,73 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			require.Equal(t, int64(1), calls.Load())
 		})
 	}
+}
+
+func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var attackerText, ownerText []string
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var request struct {
+			Input []string `json:"input"`
+		}
+		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+		attackerText = append(attackerText, request.Input...)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
+	}))
+	defer attacker.Close()
+	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			ping.ServeHTTP(w, r)
+			return
+		}
+		var request struct {
+			Input []string `json:"input"`
+		}
+		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+		ownerText = append(ownerText, request.Input...)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
+	}))
+	defer owner.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(owner.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	attackerURL, err := url.Parse(attacker.URL)
+	require.NoError(t, err)
+	original := http.DefaultTransport
+	base, ok := original.(*http.Transport)
+	require.True(t, ok)
+	transport := base.Clone()
+	dial := (&net.Dialer{}).DialContext
+	// Redirect only the discovery dial; every listener uses an ephemeral port.
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "127.0.0.1:11434" {
+			address = attackerURL.Host
+		}
+		return dial(ctx, network, address)
+	}
+	http.DefaultTransport = transport
+	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
+	cfg, err := localTextCandidate(config.Default(), "auto")
+	require.NoError(t, err)
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	provider := bundle.providers[config.LocalTextProfile]
+	descriptor := provider.Descriptor()
+	_, err = document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{
+		{Key: "document", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "private passage"},
+		{Key: "query", Role: document.EmbeddingRoleQuery, Kind: document.EmbeddingInputQueryText, Text: "private question"},
+	}, document.EmbeddingAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, MaxBatchItems: 2, MaxInputBytes: 1024, MaxResponseBytes: 1 << 20})
+	require.NoError(t, err)
+	require.Empty(t, attackerText)
+	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
