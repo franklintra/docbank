@@ -292,3 +292,20 @@ func TestDocumentSummaryResolveRejectsDuplicateIdentity(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, result)
 	assert.Equal(t, "invalid_document_query", decodeProblem(t, result).Code)
 }
+
+func TestPDFFilterHTTPValidationAndEcho(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, configureProcessingTestService(t))
+	for _, text := range []string{"pdf_has_javascript:true", "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"} {
+		response, body := get(t, ts, "/api/v1/search?pdf_filter="+url.QueryEscape(text), nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var report api.SearchReport
+		require.NoError(t, json.Unmarshal([]byte(body), &report))
+		assert.Equal(t, text, report.PDFFilter)
+		assert.Empty(t, report.Hits)
+	}
+	for _, text := range []string{"name:report", "pdf_encrypted:yes"} {
+		response, body := get(t, ts, "/api/v1/search?pdf_filter="+url.QueryEscape(text), nil)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
+}

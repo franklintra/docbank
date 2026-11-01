@@ -43,6 +43,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{Name: "alpha", EmbeddingBindings: []string{"b", "a"}, QueryEmbeddingBindings: []string{"b", "a"}},
 	}
 	cases := []automaticSearchCase{
+		{name: "PDF evidence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"}, skipped: true},
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},

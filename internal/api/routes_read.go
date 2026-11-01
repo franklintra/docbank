@@ -379,6 +379,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Q              string `query:"q"`
 		Fuzzy          bool   `query:"fuzzy"`
 		SourcePresent  bool   `query:"source_present"`
+		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
 		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
@@ -396,9 +397,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
+		if in.PDFFilter != "" {
+			if err := store.ValidatePDFFilter(in.PDFFilter); err != nil {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+			}
+		}
 		opts := store.SearchOptions{
-			SourcePresent: in.SourcePresent,
-			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			PDFFilter: in.PDFFilter, SourcePresent: in.SourcePresent,
+			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var hits []store.SearchHit
@@ -419,7 +425,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
-			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			PDFFilter: in.PDFFilter, SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
 		for _, h := range hits {

@@ -244,7 +244,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		return c.compileScalarPredicate("flag", "pick", syntax.Start, syntax.End)
 	}
 	switch {
-	case isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
+	case query.PDFFieldKind(field) != "", isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
@@ -336,6 +336,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
+	if query.PDFFieldKind(field) != "" {
+		return compilePDFPredicate(field, value, start, end)
+	}
 	if field == "person" {
 		return c.compilePersonPredicate(value), nil
 	}

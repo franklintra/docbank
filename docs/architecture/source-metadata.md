@@ -107,6 +107,8 @@ The extractor version change queues existing originals for the daemon's usual
 metadata backfill. Re-extraction retains prior evidence generations and leaves
 the original bytes unchanged.
 
+PDF search predicates read the active generation for the current content hash. They match the field key, `pdf.info` namespace, value kind, and typed value. Missing observations match neither false nor zero; permissions use exact list membership. CLI `--pdf-filter` and web Query syntax share these predicates without a projection table or schema change. See [PDF evidence filters](../usage/searching.md#find-pdfs-by-recorded-evidence).
+
 ## Current format boundary
 
 Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files within

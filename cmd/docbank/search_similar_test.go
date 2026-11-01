@@ -76,3 +76,17 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	options.ContentVersionIDs = versions[1:]
 	require.ErrorContains(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options), "selected version")
 }
+
+func TestPDFFilterRejectsUnsupportedSearchModes(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	t.Cleanup(func() { resetFlags(rootCmd) })
+	for _, args := range [][]string{
+		{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"},
+		{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"},
+		{"search", "draft", "--mode", "hybrid", "--pdf-filter", "pdf_encrypted:true"},
+		{"search", "--pdf-filter", "pdf_encrypted:yes"},
+	} {
+		_, err := runCLI(t, args...)
+		require.Error(t, err)
+	}
+}
