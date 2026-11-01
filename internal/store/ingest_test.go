@@ -502,7 +502,7 @@ func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 }
 
-func TestIngestFileMatchesSourceNamesAndRenamedURLs(t *testing.T) {
+func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -534,6 +534,12 @@ func TestIngestFileMatchesSourceNamesAndRenamedURLs(t *testing.T) {
 		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/src/report.pdf", "")
 	require.NoError(t, err)
 	assert.False(t, added)
+}
+
+func TestIngestFileMatchesURLBySourceNotName(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
 
 	dir, err := s.Mkdir(ctx, s.RootID(), "urls")
 	require.NoError(t, err)

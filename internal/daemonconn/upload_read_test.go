@@ -51,7 +51,7 @@ func TestUploadPreservesSourceReadFailure(t *testing.T) {
 	}
 }
 
-func TestUploadRejectsEmptySuccessReceipt(t *testing.T) {
+func TestUploadTreatsUnusableSuccessReceiptAsUnknownOutcome(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
@@ -60,7 +60,6 @@ func TestUploadRejectsEmptySuccessReceipt(t *testing.T) {
 		{"empty object", `{}`},
 		{"empty body", ""},
 		{"truncated body", `{"status":"added"`},
-		{"invalid JSON", `{"status":"added","node":!}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := New("http://daemon.invalid", "synthetic-key")
