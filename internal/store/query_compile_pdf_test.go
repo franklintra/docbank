@@ -156,7 +156,7 @@ func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
 				case "unknown contract":
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET contract_version='source-metadata/v2'`)
 				case "malformed JSON":
-					malformed := append(canonical, '}')
+					malformed := append(append([]byte(nil), canonical...), '}')
 					checksum := fmt.Sprintf("%x", sha256.Sum256(malformed))
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?,checksum=?`, malformed, checksum)
 				}
