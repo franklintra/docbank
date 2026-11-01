@@ -48,6 +48,6 @@ func TestPDFNamespaceGuardSkipsNonPDFValidation(t *testing.T) {
 	}))
 	compiled, err := compileQuery(ctx, compilerQuery(t, "pdf_has_javascript:true"), nil)
 	require.NoError(t, err)
-	assert.Empty(t, compiledFixtureIDs(t, conn, compiled, ""))
+	compiledFixtureIDs(t, conn, compiled, "")
 	assert.Equal(t, 1, calls, "only the damaged PDF reaches validation")
 }

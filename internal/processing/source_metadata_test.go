@@ -1747,7 +1747,7 @@ func TestSourceMetadataPDFFactsSearch(t *testing.T) {
 	payload := syntheticMetadataPDF(1)
 	digest := sha256.Sum256(payload)
 	hash := hex.EncodeToString(digest[:])
-	node, err := s.CreateFile(ctx, s.RootID(), "review.pdf", hash, int64(len(payload)), "text/plain")
+	node, err := s.CreateFile(ctx, s.RootID(), "review.pdf", hash, int64(len(payload)), "application/pdf")
 	require.NoError(t, err)
 	completed, err := BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload}, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}})
 	require.NoError(t, err)

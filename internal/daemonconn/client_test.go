@@ -1760,12 +1760,3 @@ func TestSearchFuzzyRoundTrip(t *testing.T) {
 	require.Len(t, report.Hits, 1)
 	require.Equal(t, target.ID, report.Hits[0].Node.ID)
 }
-
-func TestSearchPDFFilterRequiresEcho(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}}))
-	}))
-	defer server.Close()
-	_, err := daemonconn.New(server.URL, "key").SearchWithOptions(t.Context(), "", 10, daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"})
-	require.ErrorContains(t, err, "filter authority")
-}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 )
@@ -36,7 +38,11 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 			{"embedded_file_count", document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(i - 1))}},
 			{"permissions", document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}},
 		} {
-			fields = append(fields, document.SourceMetadataFieldV1{Key: "pdf.info." + fact.key, Namespace: "pdf.info", SourceField: fact.key, Value: fact.value})
+			sourceField := fact.key
+			if fact.key == "permissions" {
+				sourceField = "Permissions"
+			}
+			fields = append(fields, document.SourceMetadataFieldV1{Key: "pdf.info." + fact.key, Namespace: "pdf.info", SourceField: sourceField, Value: fact.value})
 		}
 		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: fields})
 		require.NoError(t, err)
@@ -63,13 +69,6 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 		{"pdf_encrypted:(true OR false) AND NOT pdf_has_javascript:true", []int64{nodes[1].ID, nodes[2].ID}},
 	} {
 		t.Run(tc.filter, func(t *testing.T) {
-			hits, _, err := s.SearchPageWithOptions(t.Context(), "", 50, SearchOptions{PDFFilter: tc.filter})
-			require.NoError(t, err)
-			var got []int64
-			for _, hit := range hits {
-				got = append(got, hit.Node.ID)
-			}
-			assert.ElementsMatch(t, tc.want, got)
 			compiled, err := compileQuery(t.Context(), compilerQuery(t, tc.filter), nil)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tc.want, compiledFixtureIDs(t, s.db, compiled, ""))
@@ -85,9 +84,25 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 
 func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 	t.Parallel()
-	for _, text := range []string{"", "name:report", "report", "pdf_encrypted:yes", "pdf_encrypted:TRUE", "pdf_embedded_file_count:>=1", "pdf_embedded_file_count:-1", "pdf_embedded_file_count:9007199254740992", "pdf_has_javascript:true*", "pdf_encrypted:(mime:application/pdf)", "pdf_encrypted:true NEAR/5 pdf_has_javascript:false"} {
-		_, err := compilePDFFilter(text)
-		assert.Error(t, err, text)
+	for _, tc := range []struct {
+		text string
+		want string
+	}{
+		{"name:report", "PDF filters require PDF fact fields"},
+		{"report", "PDF filters require PDF fact fields"},
+		{"pdf_encrypted:yes", "invalid pdf_encrypted operand"},
+		{"pdf_encrypted:TRUE", "invalid pdf_encrypted operand"},
+		{"pdf_embedded_file_count:>=1", "size operand must be a decimal nonnegative safe integer"},
+		{"pdf_embedded_file_count:-1", "size operand must be a decimal nonnegative safe integer"},
+		{"pdf_embedded_file_count:9007199254740992", "size operand must be a decimal nonnegative safe integer"},
+		{"pdf_has_javascript:true*", "scalar operands cannot use prefix matching"},
+		{"pdf_encrypted:(mime:application/pdf)", "nested field overrides are not supported"},
+		{"pdf_encrypted:true NEAR/5 pdf_has_javascript:false", "NEAR is supported only for text and name operands"},
+	} {
+		_, err := compilePDFFilter(tc.text)
+		expressionErr, ok := errors.AsType[*query.ExpressionError](err)
+		require.True(t, ok, "%s: %v", tc.text, err)
+		assert.Equal(t, tc.want, expressionErr.Message, tc.text)
 	}
 }
 

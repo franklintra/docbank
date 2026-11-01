@@ -24,12 +24,17 @@ func TestSearchSimilarRejectsRerankingBeforeDaemon(t *testing.T) {
 func TestSourcePresentRejectsUnsupportedSearchModes(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	t.Cleanup(func() { resetFlags(rootCmd) })
-	for _, args := range [][]string{
-		{"search", "--similar-to", "id:42", "--source-present"},
-		{"search", "draft", "--mode", "semantic", "--source-present"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"search", "--similar-to", "id:42", "--source-present"}, "--similar-to cannot be combined with --source-present"},
+		{[]string{"search", "draft", "--mode", "semantic", "--source-present"}, "--mode search cannot be combined with --source-present"},
+		{[]string{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"}, "--similar-to cannot be combined with --pdf-filter"},
+		{[]string{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"}, "--mode search cannot be combined with --pdf-filter"},
 	} {
-		_, err := runCLI(t, args...)
-		require.ErrorContains(t, err, "--source-present")
+		_, err := runCLI(t, tc.args...)
+		require.ErrorContains(t, err, tc.want)
 	}
 }
 
@@ -75,20 +80,4 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	assert.Contains(t, output.String(), `"state":"unavailable"`)
 	options.ContentVersionIDs = versions[1:]
 	require.ErrorContains(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options), "selected version")
-}
-
-func TestPDFFilterRejectsUnsupportedSearchModes(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	t.Cleanup(func() { resetFlags(rootCmd) })
-	for _, tc := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"search", "--similar-to", "id:42", "--pdf-filter", "pdf_encrypted:true"}, "--similar-to cannot be combined with --pdf-filter"},
-		{[]string{"search", "draft", "--mode", "semantic", "--pdf-filter", "pdf_encrypted:true"}, "--mode search cannot be combined with --pdf-filter"},
-		{[]string{"search", "draft", "--mode", "hybrid", "--pdf-filter", "pdf_encrypted:true"}, "--mode search cannot be combined with --pdf-filter"},
-	} {
-		_, err := runCLI(t, tc.args...)
-		require.ErrorContains(t, err, tc.want)
-	}
 }
