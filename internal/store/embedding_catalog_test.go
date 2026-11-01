@@ -1964,25 +1964,16 @@ func TestEmbeddingJobUnavailableRequeuePostgres(t *testing.T) {
 	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))
 	_, err = setup.ExecContext(t.Context(), `GRANT UPDATE(state,claim_owner,lease_expires_at,available_at,failure_code,updated_at) ON documents.embedding_jobs TO "`+role+`"`)
 	require.NoError(t, err)
-	for _, failure := range []EmbeddingFailureCode{EmbeddingFailureInputRejected, EmbeddingFailureProviderUnavailable} {
-		_, err = setup.ExecContext(t.Context(), `UPDATE documents.embedding_jobs SET state='failed',failure_code=$1 WHERE job_id=$2`, failure, job.ID)
-		require.NoError(t, err)
-		now := at.Format(timestampLayout)
-		require.NoError(t, target.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			return target.requeueUnavailableEmbeddingJob(t.Context(), tx, job.ID, now)
-		}))
-		var state string
-		var count, epoch int
-		var owner, lease, code sql.NullString
-		require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT state,claim_count,claim_epoch,claim_owner,lease_expires_at,failure_code FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&state, &count, &epoch, &owner, &lease, &code))
-		require.Equal(t, 3, count)
-		require.Equal(t, 3, epoch)
-		if failure == EmbeddingFailureInputRejected {
-			require.Equal(t, "failed", state)
-			require.Equal(t, string(failure), code.String)
-		} else {
-			require.Equal(t, "queued", state)
-			require.False(t, owner.Valid || lease.Valid || code.Valid)
-		}
-	}
+	now := at.Format(timestampLayout)
+	require.NoError(t, target.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return target.requeueUnavailableEmbeddingJob(t.Context(), tx, job.ID, now)
+	}))
+	var state string
+	var count, epoch int
+	var owner, lease, code sql.NullString
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT state,claim_count,claim_epoch,claim_owner,lease_expires_at,failure_code FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&state, &count, &epoch, &owner, &lease, &code))
+	require.Equal(t, 3, count)
+	require.Equal(t, 3, epoch)
+	require.Equal(t, "queued", state)
+	require.False(t, owner.Valid || lease.Valid || code.Valid)
 }

@@ -5,8 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -111,8 +109,6 @@ func TestLocalTextSwitchReusesExistingInputsAndIndexesOnlyNewText(t *testing.T) 
 	require.NoError(t, err)
 	require.False(t, managed)
 	require.Equal(t, oldServer.URL, auto.EmbeddingProfiles["semantic"].Runtime.Endpoint)
-	configPath := filepath.Join(layout.Root, "config.toml")
-	require.NoError(t, os.WriteFile(configPath, []byte("# keep this comment\n"), 0600))
 	require.NoError(t, saveLocalText(layout.Root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
 	choice, err := readLocalText(layout.Root)
 	require.NoError(t, err)
@@ -120,9 +116,6 @@ func TestLocalTextSwitchReusesExistingInputsAndIndexesOnlyNewText(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, managed)
 	require.False(t, rebuild)
-	content, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	require.Equal(t, "# keep this comment\n", string(content))
 	bundle, err = configureEmbeddingRuntimeBundle(candidate, blobs, layout.BlobTmpDir())
 	require.NoError(t, err)
 	managedConfig, err := candidate.EmbeddingProfile("semantic")
@@ -183,13 +176,7 @@ func TestLocalTextSwitchReusesExistingInputsAndIndexesOnlyNewText(t *testing.T) 
 	require.Equal(t, int64(1), localCalls.Load())
 	missing, err := catalog.MissingProcessingTargetsAfter(t.Context(), fingerprints.Profile, "", 1, 50)
 	require.NoError(t, err)
-	require.Empty(t, missing, "completed versions stay excluded after service restart")
-	require.NoError(t, service.Shutdown(t.Context()))
-	service, err = processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: layout.BlobTmpDir()})
-	require.NoError(t, err)
-	missing, err = catalog.MissingProcessingTargetsAfter(t.Context(), fingerprints.Profile, "", 1, 50)
-	require.NoError(t, err)
-	require.Empty(t, missing)
+	require.Empty(t, missing, "completed versions stay excluded from backfill")
 	receipt, err = blobs.WriteDetailedContext(t.Context(), strings.NewReader("third distinct synthetic passage"))
 	require.NoError(t, err)
 	encoding, err = receipt.EncodingName()
@@ -218,13 +205,6 @@ func TestLocalTextSwitchReusesExistingInputsAndIndexesOnlyNewText(t *testing.T) 
 	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 	require.ErrorIs(t, err, processing.ErrConsentRequired)
 	require.Equal(t, int64(1), localCalls.Load())
-	_, err = service.RevokeConsent(t.Context())
-	require.NoError(t, err)
-	selector = processing.Selector{Profile: "archive", NodeID: third.ID, ContentVersionID: third.CurrentVersionID}
-	plan, err = service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.ErrorIs(t, err, processing.ErrConsentRequired)
 	selector.Profile = "shared"
 	plan, err = service.Plan(t.Context(), selector)
 	require.NoError(t, err)

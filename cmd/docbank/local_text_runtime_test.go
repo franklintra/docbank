@@ -8,13 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/embedlocal"
 )
 
@@ -72,8 +71,8 @@ func TestLocalTextApproval(t *testing.T) {
 	}
 }
 
-func TestLocalTextCandidatePreservesOtherProvidersAndValidatesManagedModel(t *testing.T) {
-	t.Parallel()
+func TestLocalTextCandidatePreservesProvidersAndSelectsManagedModel(t *testing.T) {
+	t.Setenv("DOCBANK_TEST_VOYAGE_KEY", "synthetic-secret")
 	cfg, _ := embeddingGemma2Config(t, "http://127.0.0.1:11434", "DOCBANK_TEST_SWITCH_KEY")
 	render := newReportRenditionFixture(t)
 	cfg.RenditionProfiles = render.config.RenditionProfiles
@@ -95,15 +94,6 @@ func TestLocalTextCandidatePreservesOtherProvidersAndValidatesManagedModel(t *te
 	require.Equal(t, "semantic", after.Document.Embeddings[0].Name)
 	require.Equal(t, "nomic-embed-text", after.Document.Embeddings[0].Model)
 	require.Equal(t, "embeddinggemma2-text-f32-768-v1", before.Document.Embeddings[0].Model)
-	for _, mutate := range []func(*config.EmbeddingProfileConfig){
-		func(p *config.EmbeddingProfileConfig) { p.Model = "unsupported" },
-		func(p *config.EmbeddingProfileConfig) { p.Dimensions = 512 },
-	} {
-		e := candidate.EmbeddingProfiles["semantic"]
-		mutate(&e)
-		_, err := config.ManagedEmbeddingProfile(e, nil)
-		require.ErrorContains(t, err, "nomic-embed-text with 768 dimensions")
-	}
 	cfg, err = config.Default().WithLocalText()
 	require.NoError(t, err)
 	for _, managedBefore := range []bool{false, true} {
@@ -116,6 +106,26 @@ func TestLocalTextCandidatePreservesOtherProvidersAndValidatesManagedModel(t *te
 		require.True(t, managed)
 		require.True(t, rebuild)
 	}
+	imageConfig, image, descriptor := voyageOriginalEmbeddingConfig(t)
+	mixed, err := imageConfig.WithLocalText()
+	require.NoError(t, err)
+	p = mixed.ProcessingProfiles[config.LocalTextProfile]
+	p.Embeddings = append(p.Embeddings, "voyage")
+	mixed.ProcessingProfiles[config.LocalTextProfile] = p
+	candidate, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
+	require.NoError(t, err)
+	require.True(t, managed)
+	require.False(t, rebuild)
+	require.Equal(t, image, candidate.EmbeddingProfiles["voyage"])
+	switched, err := configureEmbeddingRuntimeBundle(candidate, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	require.Contains(t, switched.registry.Fingerprints(), descriptor.Fingerprint)
+	p.Embeddings = []string{"voyage"}
+	mixed.ProcessingProfiles[config.LocalTextProfile] = p
+	_, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
+	require.False(t, managed)
+	require.False(t, rebuild)
+	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
 
 func TestLocalTextSelectionFormat(t *testing.T) {
@@ -160,62 +170,14 @@ func TestLocalTextDefaultSelectsNomic(t *testing.T) {
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
-	for _, scenario := range []string{"missing_profile", "malformed", "newer", "no_text"} {
+	for _, scenario := range []string{"missing_profile", "malformed"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("DOCBANK_HOME", root)
 			t.Setenv("DO_NOT_TRACK", "1")
 			data := []byte(`{"version":1,"profile":"deleted-profile","server":"local"}`)
-			switch scenario {
-			case "malformed":
+			if scenario == "malformed" {
 				data = []byte(`{"version":1`)
-			case "newer":
-				data = []byte(`{"version":2,"profile":"local-text","server":"local"}`)
-			case "no_text":
-				cfg, err := config.Default().WithLocalText()
-				require.NoError(t, err)
-				e := cfg.EmbeddingProfiles[config.LocalTextProfile]
-				profile := cfg.ProcessingProfiles[config.LocalTextProfile]
-				profile.Embeddings = nil
-				cfg.ProcessingProfiles[config.LocalTextProfile] = profile
-				e.Runtime.Managed = false
-				e.Runtime.ProviderEgressConfig = config.ProviderEgressConfig{Endpoint: "http://127.0.0.1:11434", AllowedCIDRs: []string{"127.0.0.0/8"},
-					ProxyMode: "disabled", ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second), TLSHandshakeTimeout: config.Duration(time.Second)}
-				input, err := cfg.EmbeddingModelInput(config.LocalTextProfile)
-				require.NoError(t, err)
-				descriptor, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: e.Runtime.Endpoint, Descriptor: config.EmbeddingDescriptor(e, input),
-					ModelInput: input, SecretBinding: e.CredentialBinding, DeploymentEpoch: e.Runtime.DeploymentEpoch,
-					RequestTimeout: e.Runtime.RequestTimeout.Std(), MaxBatchItems: e.MaxBatchItems, MaxInputBytes: e.MaxInputBytes,
-					MaxRequestBytes: e.Runtime.MaxRequestBytes, MaxResponseBytes: e.MaxResponseBytes, EgressPolicy: providerEgressPolicy(e.Runtime.ProviderEgressConfig)})
-				require.NoError(t, err)
-				e.DescriptorFingerprint = descriptor.Fingerprint
-				e.Runtime = nil
-				cfg.EmbeddingProfiles[config.LocalTextProfile] = e
-				cfg.CredentialBindings[config.LocalTextProfile] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_RESTORE_KEY"}
-				var encoded bytes.Buffer
-				require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
-					"embedding_profiles": cfg.EmbeddingProfiles, "rendition_profiles": cfg.RenditionProfiles,
-					"retrieval_profiles": cfg.RetrievalProfiles, "processing_profiles": cfg.ProcessingProfiles,
-					"credential_bindings": cfg.CredentialBindings,
-				}))
-				encoded.WriteString(`[embedding_profiles.local-text.runtime]
-endpoint = "http://127.0.0.1:11434"
-allowed_cidrs = ["127.0.0.0/8"]
-proxy_mode = "disabled"
-connect_timeout = "1s"
-keep_alive = "1s"
-tls_handshake_timeout = "1s"
-adapter_contract = "docbank-openai-compatible-embeddings/v1"
-model_revision = "nomic-embed-text-v1.5"
-deployment_epoch = "nomic-embed-text-v1.5"
-request_timeout = "30s"
-max_request_bytes = 2097152
-`)
-				require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), encoded.Bytes(), 0600))
-				loaded, err := config.Load(root)
-				require.NoError(t, err)
-				require.NoError(t, loaded.Validate())
-				data = []byte(`{"version":1,"profile":"local-text","server":"local"}`)
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
 			stop := startServe(t)

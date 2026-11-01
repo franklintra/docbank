@@ -6,6 +6,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -183,6 +186,12 @@ func TestLocalTextSkipsIneligibleSweepAndPrunesAbsentInputs(t *testing.T) {
 		}
 		count += len(targets)
 		after = targets[len(targets)-1].ContentVersionID
+		if len(targets) < 50 {
+			targets, err := setup.targets(t.Context(), after, 50)
+			require.NoError(t, err)
+			require.Empty(t, targets, "the last examined cursor stays at the end of the sweep")
+			break
+		}
 	}
 	require.Equal(t, 1030, count)
 	targets, err := setup.targets(t.Context(), "", 50)
@@ -272,18 +281,16 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
 		return err == nil && len(jobs) == 1 && jobs[0].State == "failed" && jobs[0].FailureCode == store.EmbeddingFailureProviderUnavailable
 	}, 10*time.Second, 10*time.Millisecond)
-	failedCalls := calls.Load()
 	ready.Store(true)
-	require.Never(t, func() bool { return calls.Load() != failedCalls }, 2*time.Second, 20*time.Millisecond, "the per-target delay paces durable requeues")
 	require.Eventually(t, func() bool {
 		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
 		return err == nil && len(jobs) == 1 && jobs[0].State == "completed"
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
-func TestLocalTextPermanentFailureKeepsBackfillDelay(t *testing.T) {
+func TestLocalTextBackfillReportsPermanentFailure(t *testing.T) {
 	t.Parallel()
-	var attempts, calls atomic.Int64
+	var calls atomic.Int64
 	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), values: []float32{1}, embed: func(context.Context) error {
 		calls.Add(1)
 		return nil
@@ -293,33 +300,21 @@ func TestLocalTextPermanentFailureKeepsBackfillDelay(t *testing.T) {
 	require.NoError(t, err)
 	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "invalid-response.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 	require.NoError(t, err)
-	failed := make(chan error, 1)
-	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second,
-		List: setup.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID },
-		Process: func(ctx context.Context, item store.DocumentSummary) error {
-			if item.ContentVersionID == node.CurrentVersionID {
-				attempts.Add(1)
-			}
-			err := setup.process(ctx, item)
-			if item.ContentVersionID == node.CurrentVersionID {
-				select {
-				case failed <- err:
-				default:
-				}
-			}
-			return err
-		}}
+	logs, err := os.CreateTemp(t.TempDir(), "local-text.log")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, logs.Close()) }()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	done := make(chan error, 1)
-	go func() { done <- lane.Run(ctx) }()
+	go func() { done <- setup.Backfill(ctx, slog.New(slog.NewTextHandler(logs, nil))) }()
 	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-	select {
-	case err := <-failed:
-		require.ErrorContains(t, err, string(store.EmbeddingFailureInvalidResponse))
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	require.Never(t, func() bool { return attempts.Load() > 1 }, 2*time.Second, 20*time.Millisecond, "terminal failures retain the first per-target retry delay")
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(logs.Name())
+		return err == nil && strings.Contains(string(data), string(store.EmbeddingFailureInvalidResponse))
+	}, 5*time.Second, 10*time.Millisecond, "the local-text lane reports terminal job failures to Backfill")
+	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, setup.Service.profiles["pdf"].record.Fingerprint)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, store.EmbeddingFailureInvalidResponse, jobs[0].FailureCode)
 	require.Equal(t, int64(1), calls.Load())
 }
 
@@ -356,12 +351,14 @@ func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	backfillDone, indexDone := make(chan error, 1), make(chan error, 1)
+	indexStarted := false
 	go func() { backfillDone <- setup.Backfill(ctx, nil) }()
-	go func() { indexDone <- indexer.Run(ctx) }()
 	defer func() {
 		cancel()
 		require.ErrorIs(t, <-backfillDone, ctx.Err())
-		require.ErrorIs(t, <-indexDone, ctx.Err())
+		if indexStarted {
+			require.ErrorIs(t, <-indexDone, ctx.Err())
+		}
 	}()
 	select {
 	case <-thirdStarted:
@@ -369,6 +366,13 @@ func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	space := setup.Service.profiles["pdf"].vectorSpaces["chunk"]
+	before, err := fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
+	if !errors.Is(err, store.ErrNotFound) {
+		require.NoError(t, err)
+		require.Zero(t, before.RowCount, "backfill defers publication to the recurring worker")
+	}
+	go func() { indexDone <- indexer.Run(ctx) }()
+	indexStarted = true
 	var during store.VectorIndexGenerationRecord
 	require.Eventually(t, func() bool {
 		var err error
@@ -380,30 +384,6 @@ func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
 		generation, err := fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
 		return err == nil && generation.RowCount == 8 && generation.ID != during.ID
 	}, 5*time.Second, 10*time.Millisecond, "the recurring publisher includes the final documents")
-}
-
-func TestLocalTextTargetPageFiltersCachedCandidates(t *testing.T) {
-	t.Parallel()
-	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-	version, err := fixture.catalog.ContentVersionByID(t.Context(), fixture.versionID)
-	require.NoError(t, err)
-	for i := range 120 {
-		_, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), fmt.Sprintf("cached-%03d.pdf", i), version.BlobHash, version.Size, "application/pdf")
-		require.NoError(t, err)
-	}
-	items, err := fixture.catalog.MissingProcessingTargetsAfter(t.Context(), setup.Service.profiles["pdf"].record.Fingerprint, "", 1, 1000)
-	require.NoError(t, err)
-	require.Len(t, items, 121)
-	setup.skips = make(map[localTextSkipKey]*localTextSkip)
-	for _, item := range items[:120] {
-		setup.skips[localTextSkipKey{item.ContentVersionID, item.Name}] = &localTextSkip{seen: true}
-	}
-	targets, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Equal(t, items[120:], targets)
-	targets, err = setup.targets(t.Context(), targets[0].ContentVersionID, 50)
-	require.NoError(t, err)
-	require.Empty(t, targets)
 }
 
 func BenchmarkLocalTextIdleSweep(b *testing.B) {

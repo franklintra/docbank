@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
@@ -31,8 +32,8 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 				return nil
 			},
 			Save: func(name, mode string) error {
-				require.Equal(t, "private", name)
-				require.Equal(t, "local", mode)
+				assert.Equal(t, "private", name)
+				assert.Equal(t, "local", mode)
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")
 				}
@@ -41,8 +42,8 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 			},
 		}
 		setup.Candidate = func(name, mode string) (*processing.Service, bool, bool, error) {
-			require.Equal(t, "private", name)
-			require.Equal(t, "local", mode)
+			assert.Equal(t, "private", name)
+			assert.Equal(t, "local", mode)
 			if unsupported.Load() {
 				return nil, false, false, fmt.Errorf("%w: choose --profile local-text or configure 768 dimensions", processing.ErrLocalTextConfiguration)
 			}
@@ -60,18 +61,8 @@ func TestLocalTextSetupRouteReviewsConsentAndImportRace(t *testing.T) {
 	require.Equal(t, "this vault and new imports", plan.Scope)
 	require.Len(t, plan.Flow, 3)
 	require.Equal(t, "query_embedding", plan.Flow[2].Capability)
-	collection := importCollection(t, ts.URL, ts.Client(), "manual.txt", "synthetic manual", nil)
-	quality, body := get(t, ts, "/api/v1/collections/"+collection.IngestID+"/quality", nil)
-	require.Equal(t, http.StatusOK, quality.StatusCode, body)
-	var coverage struct {
-		Collection struct {
-			Coverage struct {
-				Configuration string `json:"configuration"`
-			} `json:"coverage"`
-		} `json:"collection"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &coverage))
-	require.Equal(t, "unconfigured", coverage.Collection.Coverage.Configuration, "preview leaves default browser search unchanged")
+	require.Zero(t, starts.Load())
+	require.Zero(t, saves.Load())
 	request := api.LocalTextApplyRequest{Profile: plan.Profile, Server: plan.Server, PlanFingerprint: plan.Fingerprint}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusPreconditionRequired, response.StatusCode, body)

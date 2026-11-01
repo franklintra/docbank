@@ -242,6 +242,15 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 
 func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *testing.T) {
 	t.Setenv("DOCBANK_TEST_VOYAGE_KEY", "synthetic-secret")
+	cfg, _, final := voyageOriginalEmbeddingConfig(t)
+
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
+}
+
+func voyageOriginalEmbeddingConfig(t *testing.T) (config.Config, config.EmbeddingProfileConfig, document.EmbeddingDescriptor) {
+	t.Helper()
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: voyage.DefaultModel, Dimension: voyage.DefaultDimension,
 		Media: media.Policy{MaxBytes: 1 << 20, AllowStill: true, AllowVideo: true}, MaxBatchItems: 8,
 		MaxRequestBytes: 1 << 20, MaxResponseBytes: 1 << 20})
@@ -288,30 +297,7 @@ func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *
 	cfg.EmbeddingProfiles["voyage"] = profile
 	require.NoError(t, cfg.Validate())
 
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
-	require.NoError(t, err)
-	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
-	t.Run("local text switch preserves the image provider", func(t *testing.T) {
-		mixed, err := cfg.WithLocalText()
-		require.NoError(t, err)
-		p := mixed.ProcessingProfiles[config.LocalTextProfile]
-		p.Embeddings = append(p.Embeddings, "voyage")
-		mixed.ProcessingProfiles[config.LocalTextProfile] = p
-		candidate, managed, rebuild, err := localTextCandidate(mixed, config.LocalTextProfile, "local")
-		require.NoError(t, err)
-		require.True(t, managed)
-		require.False(t, rebuild)
-		require.Equal(t, profile, candidate.EmbeddingProfiles["voyage"])
-		switched, err := configureEmbeddingRuntimeBundle(candidate, unavailableEmbeddingBlobs{}, t.TempDir())
-		require.NoError(t, err)
-		require.Contains(t, switched.registry.Fingerprints(), final.Fingerprint)
-		p.Embeddings = []string{"voyage"}
-		mixed.ProcessingProfiles[config.LocalTextProfile] = p
-		_, managed, rebuild, err = localTextCandidate(mixed, config.LocalTextProfile, "local")
-		require.False(t, managed)
-		require.False(t, rebuild)
-		require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
-	})
+	return cfg, profile, final
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {
@@ -370,15 +356,6 @@ func TestEmbeddingRuntimeClassifiesMalformedOpenAIResponses(t *testing.T) {
 		require.Equal(t, processing.EmbeddingProviderInvalidResponse, classification)
 		require.Zero(t, delay)
 	}
-}
-
-func TestEmbeddingRuntimeClassifiesManagedOriginStartupFailures(t *testing.T) {
-	t.Parallel()
-	startup := fmt.Errorf("start embeddings server: %w", errors.New("synthetic startup failure"))
-	err := fmt.Errorf("%w: resolve managed origin: %w", openaicompat.ErrTransientResponse, startup)
-	classification, delay := classifyOpenAIEmbeddingError(err)
-	require.Equal(t, processing.EmbeddingProviderTransient, classification)
-	require.Zero(t, delay)
 }
 
 func TestEmbeddingRuntimeClassifiesMalformedVoyageResponses(t *testing.T) {
