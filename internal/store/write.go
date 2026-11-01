@@ -299,7 +299,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 		return err
 	}
 	if inserted != 0 {
-		return s.writeLooseDocumentLocationTx(tx, hash, storage)
+		return s.writeLooseDocumentLocationTx(context.Background(), tx, hash, storage)
 	}
 	var recordedSize int64
 	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash=$1`, hash).Scan(&recordedSize); err != nil {
@@ -313,7 +313,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		if errors.Is(err, ErrPhysicalAuthorityMissing) {
 			if storage.Created {
-				return s.writeLooseDocumentLocationTx(tx, hash, storage)
+				return s.writeLooseDocumentLocationTx(context.Background(), tx, hash, storage)
 			}
 			if _, authorityErr := requirePhysicalAuthorityTx(tx, hash); authorityErr == nil {
 				return nil
@@ -333,7 +333,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 			hash, storage.Encoding, storage.StoredBytes, current.Encoding, current.StoredBytes,
 		)
 	}
-	return s.writeLooseDocumentLocationTx(tx, hash, storage)
+	return s.writeLooseDocumentLocationTx(context.Background(), tx, hash, storage)
 }
 
 func (s *Store) createFileTx(
