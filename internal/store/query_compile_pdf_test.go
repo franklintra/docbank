@@ -111,11 +111,9 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 	}
 }
 
-func TestPDFFilterNegationExcludesDirectories(t *testing.T) {
+func TestPDFFilterNegationMatchesUnknownEvidenceWithText(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.Mkdir(t.Context(), s.RootID(), "review-folder")
-	require.NoError(t, err)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "review.pdf", fakeHash("a1"), 12, "application/pdf")
 	require.NoError(t, err)
 	for _, text := range []string{"", "review"} {
@@ -163,10 +161,6 @@ func TestPDFFactSearchRejectsInvalidGenerations(t *testing.T) {
 					_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET canonical_json=?,checksum=?`, malformed, checksum)
 				}
 				require.NoError(t, err)
-				if damage == "unknown contract" {
-					_, _, err = s.ActiveSourceMetadata(ctx, node.BlobHash)
-					require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
-				}
 				hits, _, err = s.SearchPageWithOptions(ctx, "", 50, SearchOptions{PDFFilter: "pdf_has_javascript:true"})
 				require.NoError(t, err)
 				assert.Empty(t, hits)

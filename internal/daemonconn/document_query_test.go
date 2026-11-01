@@ -86,46 +86,47 @@ func TestResolveDocumentSummariesRejectsDuplicateIdentity(t *testing.T) {
 }
 
 func TestSourcePresentAndPDFFilterReadsRequireDaemonBinding(t *testing.T) {
-	for _, opts := range []daemonconn.SearchOptions{
-		{SourcePresent: true},
-		{PDFFilter: "pdf_encrypted:true"},
+	page := api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 50, Items: []api.DocumentSummary{}}
+	boundPage := page
+	boundPage.SourcePresent = true
+	report := api.SearchReport{Hits: []api.SearchHit{}, Limit: 10}
+	boundSourceReport, boundPDFReport := report, report
+	boundSourceReport.SourcePresent = true
+	boundPDFReport.PDFFilter = "pdf_encrypted:true"
+	for _, tc := range []struct {
+		parameter, value string
+		bound, unbound   any
+		read             func(*daemonconn.Connection) error
+		wantError        string
+	}{
+		{"source_present", "true", boundPage, page, func(c *daemonconn.Connection) error {
+			_, err := c.ListDocuments(t.Context(), api.DocumentQuery{SourcePresent: true})
+			return err
+		}, "does not bind its query"},
+		{"source_present", "true", boundSourceReport, report, func(c *daemonconn.Connection) error {
+			_, err := c.SearchWithOptions(t.Context(), "draft", 10, daemonconn.SearchOptions{SourcePresent: true})
+			return err
+		}, "inconsistent filter authority"},
+		{"pdf_filter", "pdf_encrypted:true", boundPDFReport, report, func(c *daemonconn.Connection) error {
+			_, err := c.SearchWithOptions(t.Context(), "draft", 10, daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"})
+			return err
+		}, "inconsistent filter authority"},
 	} {
-		for _, bound := range []bool{false, true} {
+		for _, response := range []struct {
+			body  any
+			check func(error)
+		}{
+			{tc.bound, func(err error) { require.NoError(t, err) }},
+			{tc.unbound, func(err error) { require.ErrorContains(t, err, tc.wantError) }},
+		} {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				if opts.SourcePresent {
-					assert.Equal(t, "true", request.URL.Query().Get("source_present"))
-				} else {
-					assert.Equal(t, opts.PDFFilter, request.URL.Query().Get("pdf_filter"))
-				}
+				assert.Equal(t, tc.value, request.URL.Query().Get(tc.parameter))
 				w.Header().Set("Content-Type", "application/json")
-				if request.URL.Path == "/api/v1/search" {
-					report := api.SearchReport{Hits: []api.SearchHit{}, Limit: 10}
-					if bound {
-						report.SourcePresent = opts.SourcePresent
-						report.PDFFilter = opts.PDFFilter
-					}
-					_ = json.MarshalWrite(w, report)
-					return
-				}
-				_ = json.MarshalWrite(w, api.DocumentPage{SourcePresent: bound,
-					PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 50, Items: []api.DocumentSummary{}})
+				_ = json.MarshalWrite(w, response.body)
 			}))
-			c := daemonconn.New(ts.URL, "daemon-key")
-			if opts.SourcePresent {
-				_, listErr := c.ListDocuments(t.Context(), api.DocumentQuery{SourcePresent: true})
-				if bound {
-					require.NoError(t, listErr)
-				} else {
-					require.ErrorContains(t, listErr, "does not bind its query")
-				}
-			}
-			_, searchErr := c.SearchWithOptions(t.Context(), "draft", 10, opts)
+			err := tc.read(daemonconn.New(ts.URL, "daemon-key"))
 			ts.Close()
-			if bound {
-				require.NoError(t, searchErr)
-			} else {
-				require.ErrorContains(t, searchErr, "inconsistent filter authority")
-			}
+			response.check(err)
 		}
 	}
 }
